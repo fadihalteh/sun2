@@ -1,41 +1,44 @@
-name: CI
+name: Build and Test
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [ main ]
   pull_request:
-    branches: [main, master, develop]
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          if ! sudo apt-get install -y \
+          sudo apt-get install -y \
             cmake \
-            ninja-build \
             g++ \
+            ninja-build \
             pkg-config \
             libgpiod-dev \
-            libgpiodcxx-dev; then
-            sudo apt-get install -y \
-              cmake \
-              ninja-build \
-              g++ \
-              pkg-config \
-              libgpiod-dev
-          fi
+            libjsoncpp-dev
 
-      - name: Configure and build
-        run: bash ./scripts/build_core.sh build
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build --parallel
 
       - name: Run tests
-        run: bash ./scripts/test_core.sh build
+        run: |
+          ctest --test-dir build --output-on-failure
