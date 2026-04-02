@@ -187,64 +187,97 @@ This avoids stale backlog and prioritises current data over historical frames.
 ```mermaid
 sequenceDiagram
     actor User
-    participant Cam as Camera Backend
+    participant Cam as Camera
     participant SM as SystemManager
+    participant FQ as FrameQueue
     participant ST as SunTracker
     participant C as Controller
     participant MIC as ManualImuCoordinator
     participant K as Kinematics3RRS
+    participant CQ as CommandQueue
     participant AM as ActuatorManager
     participant SD as ServoDriver
+    participant ADS as ADS1115
+    participant IMU as MPU6050
+    participant LM as LatencyMonitor
 
-    User->>SM: Start tracker
+    User->>SM: start()
     SM->>SD: start()
     SM->>Cam: start()
-    SM->>SM: setState(STARTUP)
-    SM->>SD: apply startup park
-    SM->>SM: setState(NEUTRAL)
-    SM->>SM: setState(SEARCHING)
+    SM->>ADS: start()
+    SM->>IMU: start()
+    SM->>SM: state = SEARCHING / MANUAL
 
-    Cam-->>SM: FrameEvent callback
-    SM->>ST: onFrame(FrameEvent)
+    IMU-->>SM: imu sample
+    SM->>MIC: updateImuSample(sample)
+
+    rect rgb(245,245,255)
+    Note over Cam,SD: Automatic frame-driven path
+    Cam-->>SM: FrameEvent
+    SM->>LM: onCapture(...)
+    SM->>FQ: push_latest(frame)
+
+    FQ-->>SM: wait_pop()
+    SM->>ST: onFrame(frame)
     ST-->>SM: SunEstimate
+    SM->>LM: onEstimate(...)
 
-    alt confidence >= threshold
-        SM->>SM: setState(TRACKING)
-        SM->>C: onEstimate(SunEstimate)
+    alt auto mode
+        SM->>C: onEstimate(estimate)
         C-->>SM: PlatformSetpoint
-        SM->>MIC: coordinate(PlatformSetpoint)
-        MIC-->>SM: PlatformSetpoint
-        SM->>K: onSetpoint(PlatformSetpoint)
+        SM->>LM: onControl(...)
+        SM->>MIC: applyImuCorrection(setpoint)
+        MIC-->>SM: corrected setpoint
+        SM->>K: onSetpoint(setpoint)
         K-->>SM: ActuatorCommand
-        SM->>AM: onCommand(ActuatorCommand)
-        AM-->>SM: Safe ActuatorCommand
-        SM->>SD: apply(Safe ActuatorCommand)
-    else confidence < threshold
-        SM->>SM: setState(SEARCHING)
+        SM->>CQ: push_latest(command)
+    else manual mode
+        SM-->>SM: frame ignored
     end
 
-    opt Manual mode
-        User->>SM: enterManual()
-        SM->>SM: setState(MANUAL)
-        User->>SM: setManualSetpoint(tilt, pan)
-        SM->>MIC: coordinate(manual setpoint)
-        MIC-->>SM: PlatformSetpoint
-        SM->>K: onSetpoint(PlatformSetpoint)
-        K-->>SM: ActuatorCommand
-        SM->>AM: onCommand(ActuatorCommand)
-        AM-->>SM: Safe ActuatorCommand
-        SM->>SD: apply(Safe ActuatorCommand)
-        User->>SM: exitManual()
-        SM->>SM: setState(SEARCHING)
+    CQ-->>SM: wait_pop()
+    SM->>AM: onCommand(command)
+    AM-->>SM: safe command
+    SM->>LM: onActuate(...)
+    SM->>SD: apply(command)
     end
 
-    opt Stop system
-        User->>SM: stop()
-        SM->>SM: setState(STOPPING)
-        SM->>Cam: stop()
-        SM->>SD: stop()
-        SM->>SM: setState(IDLE)
+    rect rgb(245,255,245)
+    Note over ADS,SD: Manual hardware input path
+    ADS-->>SM: manual pot sample
+    SM->>MIC: buildManualSetpointFromPot(...)
+    alt MANUAL and pot control active
+        MIC-->>SM: PlatformSetpoint
+        SM->>LM: onControl(...)
+        SM->>K: onSetpoint(setpoint)
+        K-->>SM: ActuatorCommand
+        SM->>CQ: push_latest(command)
     end
+    end
+
+    rect rgb(255,250,240)
+    Note over User,SD: Manual GUI path
+    User->>SM: enterManual()
+    SM->>SM: state = MANUAL
+
+    User->>SM: setManualSetpoint(tilt, pan)
+    SM->>MIC: buildManualSetpointFromGui(...)
+    MIC-->>SM: PlatformSetpoint
+    SM->>LM: onControl(...)
+    SM->>K: onSetpoint(setpoint)
+    K-->>SM: ActuatorCommand
+    SM->>CQ: push_latest(command)
+
+    User->>SM: exitManual()
+    SM->>SM: state = SEARCHING
+    end
+
+    User->>SM: stop()
+    SM->>Cam: stop()
+    SM->>ADS: stop()
+    SM->>IMU: stop()
+    SM->>SD: stop()
+    SM->>SM: state = IDLE
 ```
 Circuit Diagram
 <p align="center"> <img src="diagrams/circuit_diagram.png" alt="Circuit Diagram" width="900"> </p>
