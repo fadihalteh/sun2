@@ -32,6 +32,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 
 - [Social Media](#social-media)
 - [Project Overview](#project-overview)
+- [Project Management](#project-management)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
 - [Sequence Diagram](#sequence-diagram)
