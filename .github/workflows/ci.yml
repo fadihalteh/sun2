@@ -35,7 +35,7 @@ jobs:
           fi
 
       - name: Configure and build
-        run: ./scripts/build_core.sh build
+        run: bash ./scripts/build_core.sh build
 
       - name: Run tests
-        run: ./scripts/test_core.sh build
+        run: bash ./scripts/test_core.sh build

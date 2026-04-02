@@ -32,10 +32,10 @@ jobs:
           fi
 
       - name: Configure and build (Pi)
-        run: ./scripts/build_pi_debug.sh build-pi
+        run: bash ./scripts/build_pi_debug.sh build-pi
 
       - name: Run hardware smoke tests
-        run: ./scripts/test_pi_hw.sh build-pi
+        run: bash ./scripts/test_pi_hw.sh build-pi
 
       - name: Upload hardware test log
         if: always()
