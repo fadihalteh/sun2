@@ -95,6 +95,17 @@ The main software path is:
 
 ---
 
+## Project Management
+
+Development was tracked through GitHub issues, milestones, branches, pull requests, and tagged releases.
+
+See:
+- Issues for feature planning and bug tracking
+- Milestones for delivery stages
+- Pull requests for reviewed changes
+- Releases for submission snapshots
+---
+
 ## Key Features
 
 - **Realtime event-driven processing**
