@@ -9,15 +9,11 @@
 #include "system/SystemManager.hpp"
 #include "src/tests/support/test_common.hpp"
 
-#include <chrono>
 #include <memory>
-#include <thread>
 #include <utility>
 
-using solar::FrameEvent;
 using solar::ICamera;
 using solar::Logger;
-using solar::PixelFormat;
 using solar::SystemManager;
 using solar::TrackerState;
 using solar::app::AppConfig;

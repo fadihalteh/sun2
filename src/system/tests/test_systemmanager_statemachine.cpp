@@ -9,6 +9,7 @@
 #include "system/SystemManager.hpp"
 #include "src/tests/support/test_common.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -117,6 +118,7 @@ TEST_CASE(SystemManager_start_to_searching_then_tracking_on_bright_frame) {
 TEST_CASE(SystemManager_manual_mode_emits_commands) {
     Logger log;
     auto cam = std::make_unique<FakeCamera>();
+    auto* cam_ptr = cam.get();
 
     auto cfg = makeBaseConfig();
 
@@ -124,18 +126,33 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
 
     REQUIRE(system.start());
     system.enterManual();
+    system.setManualCommandSource(SystemManager::ManualCommandSource::Gui);
 
     REQUIRE(system.state() == TrackerState::MANUAL);
 
-    bool got_command = false;
+    std::atomic<int> command_count{0};
     system.registerCommandObserver([&](const solar::ActuatorCommand&) {
-        got_command = true;
+        command_count.fetch_add(1, std::memory_order_relaxed);
     });
 
     system.setManualSetpoint(0.1F, -0.1F);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    // GUI/manual input should no longer directly drive kinematics from the UI call.
+    REQUIRE(command_count.load(std::memory_order_relaxed) == 0);
+
+    cam_ptr->emitBrightCenteredFrame(1);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    REQUIRE(got_command);
+    const int first_count = command_count.load(std::memory_order_relaxed);
+    REQUIRE(first_count > 0);
+
+    // Manual GUI mode should remain continuous on later control ticks without
+    // needing another setManualSetpoint() call.
+    cam_ptr->emitBrightCenteredFrame(2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    REQUIRE(command_count.load(std::memory_order_relaxed) > first_count);
 
     system.stop();
 }
