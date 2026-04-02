@@ -1,160 +1,194 @@
 # Build and Run
 
-## Purpose
-
-This document gives an exact build-and-run procedure based on the current repository snapshot. All targets, scripts, and CMake options are verified against `CMakeLists.txt` and `.github/workflows/`.
+This file gives the exact repository setup, submodule checkout, build, test, and run commands for the current project snapshot.
 
 ---
 
-## 1. Install Dependencies
+## Cloning
 
-### Required (all builds)
-
-```bash
-sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++ pkg-config libgpiod-dev
-```
-
-### Optional — Qt GUI target
-
-Requires both `Widgets` and `Charts` components. If either is missing, `solar_tracker_qt` will not be built.
+To clone with all submodules in one step, run:
 
 ```bash
-sudo apt-get install -y qtbase5-dev libqt5charts5-dev
-```
-
-### Optional — libcamera backend
-
-The libcamera backend only activates when **both** libcamera and OpenCV are present. Installing libcamera alone is not sufficient.
-
-```bash
-sudo apt-get install -y libopencv-dev libcamera-dev
-```
-
-### Optional — hardware validation tools
-
-```bash
-sudo apt-get install -y i2c-tools
-```
-
----
-
-## 2. Clone and Initialise Submodules
-
-```bash
-git clone <repo-url>
+git clone --recurse-submodules https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker.git
 cd Solar-Stewart-Tracker
+```
+
+If you already cloned without submodules, run:
+
+```bash
 git submodule update --init --recursive
 ```
 
-Two submodules are declared in `.gitmodules`:
+---
 
-- `external/libgpiod_event_demo`
-- `external/libcamera2opencv`
+## External repositories used by this project
 
-`external/rpi_ads1115` is vendored directly and requires no separate initialisation.
+The project uses these external repositories as git submodules under `external/`, use these commands if you dont have them:
+
+```bash
+git submodule add https://github.com/berndporr/libcamera2opencv.git external/libcamera2opencv
+git submodule add https://github.com/berndporr/libgpiod_event_demo.git external/libgpiod_event_demo
+git submodule add https://github.com/berndporr/rpi_ads1115.git external/rpi_ads1115
+```
+
+After adding them, fetch their contents with:
+
+```bash
+git submodule update --init --recursive
+```
+
+To verify they are present, run:
+
+```bash
+git submodule status
+ls external
+```
+
+If you ever need to refresh them to the commits recorded by the main repository, run:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive --checkout
+```
+
+To pull the latest remote changes for the submodules:
+
+```bash
+git submodule update --remote --recursive
+```
 
 ---
 
-## 3. Configure
+## If the external folders are missing
 
-### Standard release build
+If the repository was copied manually and the `external/` repositories are not populated, use:
+
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+git submodule update --init --recursive
 ```
 
-### With Ninja (faster incremental builds)
+That will place the repositories at these exact paths:
+
+```text
+external/libcamera2opencv
+external/libgpiod_event_demo
+external/rpi_ads1115
+```
+
+---
+
+## Linux dependencies
+
+### Core build dependencies
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build git pkg-config libgpiod-dev
+```
+
+### Optional Qt GUI dependencies
+
+```bash
+sudo apt install -y qtbase5-dev libqt5charts5-dev qt5-qmake
+```
+
+### Optional OpenCV and libcamera dependencies
+
+```bash
+sudo apt install -y libopencv-dev libcamera-dev
+```
+
+### Optional hardware tools
+
+```bash
+sudo apt install -y i2c-tools
+```
+
+### Optional documentation tools
+
+```bash
+sudo apt install -y doxygen graphviz
+```
+
+---
+
+## CMake options used by this project
+
+```text
+SOLAR_ENABLE_TESTS=ON        default
+SOLAR_ENABLE_HW_TESTS=OFF    default
+SOLAR_ENABLE_QT=ON           default
+SOLAR_TRY_LIBCAMERA=ON       default
+SOLAR_TRY_OPENCV=ON          default
+SOLAR_ENABLE_COVERAGE=OFF    default
+```
+
+---
+
+## Standard release build
+
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
-### Disable optional features explicitly
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-    -DSOLAR_ENABLE_QT=OFF \
-    -DSOLAR_TRY_LIBCAMERA=OFF \
-    -DSOLAR_TRY_OPENCV=OFF
-```
-
-### With hardware tests enabled
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
-```
-
-All CMake options and their defaults:
-
-| Option | Default | Effect |
-|---|---|---|
-| `SOLAR_ENABLE_TESTS` | `ON` | Build test targets |
-| `SOLAR_ENABLE_HW_TESTS` | `OFF` | Register hardware smoke tests with CTest |
-| `SOLAR_ENABLE_QT` | `ON` | Build `solar_tracker_qt` if Qt5 found |
-| `SOLAR_TRY_LIBCAMERA` | `ON` | Probe for libcamera (also requires OpenCV) |
-| `SOLAR_TRY_OPENCV` | `ON` | Probe for OpenCV |
-| `SOLAR_ENABLE_COVERAGE` | `OFF` | Enable `--coverage` compile/link flags |
-
----
-
-## 4. Build
+If you do not want to use Ninja:
 
 ```bash
-cmake --build build -j
-```
-
-### User-facing executables
-
-| Target | Condition |
-|---|---|
-| `solar_tracker` | Always built |
-| `solar_tracker_qt` | Built only if `Qt5 Widgets` and `Qt5 Charts` are found |
-
-### Key internal library targets
-
-| Target | Source |
-|---|---|
-| `solar_common` | `src/common/` |
-| `solar_hal` | `src/hal/` |
-| `solar_control` | `src/control/` |
-| `solar_actuators` | `src/actuators/` |
-| `solar_sensors` | `src/sensors/` |
-| `solar_vision` | `src/vision/` |
-| `solar_system` | `src/system/` |
-| `solar_app` | `src/app/` |
-| `cam2opencv` | Built only if libcamera **and** OpenCV are both found |
-
----
-
-## 5. Run Software Tests
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-Or using the repository helper script:
-
-```bash
-./scripts/test_core.sh build
-```
-
-To run one specific test directly:
-
-```bash
-./build/tests/test_actuators --run ActuatorManager_first_command_is_saturated_without_history_limit
-./build/tests/test_actuators --list
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
 ---
 
-## 6. Run the Application
+## Minimal headless build
 
-### Headless runtime
+This disables the optional GUI, libcamera, and OpenCV paths:
+
+```bash
+cmake -S . -B build   -G Ninja   -DCMAKE_BUILD_TYPE=Release   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_TRY_LIBCAMERA=OFF   -DSOLAR_TRY_OPENCV=OFF
+
+cmake --build build --parallel
+```
+
+---
+
+## Build with hardware tests enabled
+
+```bash
+cmake -S . -B build-pi   -G Ninja   -DCMAKE_BUILD_TYPE=Debug   -DSOLAR_ENABLE_TESTS=ON   -DSOLAR_ENABLE_HW_TESTS=ON   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_TRY_LIBCAMERA=OFF   -DSOLAR_TRY_OPENCV=OFF
+
+cmake --build build-pi --parallel
+```
+
+This same configuration is also wrapped by the repository helper script:
+
+```bash
+./scripts/build_pi_debug.sh build-pi
+```
+
+---
+
+## Main executables
+
+After a successful build, the main runtime targets are:
+
+```text
+build/solar_tracker
+build/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
+```
+
+---
+
+## Run the application
+
+### Headless application
 
 ```bash
 ./build/solar_tracker
 ```
 
-### Qt GUI runtime
-
-Only available if Qt5 was found at configure time:
+### Qt GUI application
 
 ```bash
 ./build/solar_tracker_qt
@@ -162,73 +196,87 @@ Only available if Qt5 was found at configure time:
 
 ---
 
-## 7. Capture Latency Data
+## Run the software tests
 
 ```bash
-./scripts/run_latency.sh build artefacts/latency.csv solar_tracker
+ctest --test-dir build --output-on-failure
 ```
 
-This sets `SOLAR_LATENCY_CSV` before launching the application. On shutdown, the `LatencyMonitor` writes per-frame timing data to the specified path.
+Repository helper script:
+
+```bash
+./scripts/test_core.sh build
+```
 
 ---
 
-## 8. Hardware Tests (Raspberry Pi)
+## Run hardware-labelled tests on Raspberry Pi
 
-Hardware tests require a self-hosted Pi runner and are triggered manually in CI via `pi-hardware-tests.yml`. The build and run scripts referenced by that workflow (`build_pi_debug.sh`) are not present in this snapshot.
-
-To run hardware-registered CTest checks on a Pi with a built tree:
+The helper script sets default hardware environment variables and then runs CTest with the `hw` label.
 
 ```bash
-cmake -S . -B build-pi -DCMAKE_BUILD_TYPE=Debug -DSOLAR_ENABLE_HW_TESTS=ON
-cmake --build build-pi -j
 ./scripts/test_pi_hw.sh build-pi
 ```
 
-The `test_pi_hw.sh` script sets these environment variables before invoking CTest:
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SOLAR_RUN_CAMERA_HW_TESTS` | `1` | Enable camera hardware checks |
-| `SOLAR_RUN_I2C_HW_TESTS` | `1` | Enable I2C hardware checks |
-| `SOLAR_I2C_DEV` | `/dev/i2c-1` | I2C device path |
-
-Hardware validation before running:
+Equivalent explicit form:
 
 ```bash
-i2cdetect -y 1    # verify PCA9685, ADS1115, MPU6050 are visible on the bus
-gpioinfo          # verify GPIO chip and pin availability
+export SOLAR_RUN_CAMERA_HW_TESTS=1
+export SOLAR_RUN_I2C_HW_TESTS=1
+export SOLAR_I2C_DEV=/dev/i2c-1
+ctest --test-dir build-pi -L hw --output-on-failure
 ```
 
 ---
 
-## 9. Package a Release
+## Manual hardware smoke tests
+
+These are for controlled hardware checks and should only be run on the target machine with the hardware connected safely.
 
 ```bash
-./scripts/package_release.sh build solar-stewart-tracker-release.zip
+./build-pi/tests/test_pca9685
+./build-pi/tests/test_servodriver
 ```
 
-This copies `solar_tracker` (and `solar_tracker_qt` if present), `src/`, `CMakeLists.txt`, `README.md`, `LICENSE`, and `docs/` into a `release_package/` directory and zips it.
+If a dedicated manual servo smoke test target is present in your checkout, run it only with safe mechanical clearance and conservative limits.
 
 ---
 
-## 10. Quick-Start Summary
+## Typical Raspberry Pi workflow
 
 ```bash
-# Clone
-git clone <repo-url>
+git clone --recurse-submodules https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker.git
 cd Solar-Stewart-Tracker
+
 git submodule update --init --recursive
 
-# Install minimum dependencies
-sudo apt-get install -y cmake ninja-build g++ pkg-config libgpiod-dev
+cmake -S . -B build-pi   -G Ninja   -DCMAKE_BUILD_TYPE=Release   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_ENABLE_HW_TESTS=ON
 
-# Configure and build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build-pi --parallel
 
-# Test
-ctest --test-dir build --output-on-failure
-
-# Run
-./build/solar_tracker
+ctest --test-dir build-pi --output-on-failure
+./build-pi/solar_tracker
 ```
+
+---
+
+## Clean rebuild
+
+If the build directory becomes stale, rebuild from scratch:
+
+```bash
+rm -rf build build-pi
+git submodule sync --recursive
+git submodule update --init --recursive
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+---
+
+## Notes
+
+- Use `--recurse-submodules` on the first clone so the external repositories are checked out immediately.
+- If someone cloned the repository without submodules, `git submodule update --init --recursive` is the required recovery step.
+- Keep the external repositories at the paths under `external/` so the build system can find them consistently.
