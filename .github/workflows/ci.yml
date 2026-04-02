@@ -14,6 +14,9 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      LIBGPIOD_VERSION: "2.2.2"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,23 +24,44 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Verify external dependencies
-        run: |
-          test -f external/libgpiod_event_demo/gpioevent.h
-          ls -R external | head -200
-
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            autoconf \
+            autoconf-archive \
+            automake \
             cmake \
             g++ \
+            libjsoncpp-dev \
+            libtool \
+            make \
             ninja-build \
             pkg-config \
-            libgpiod-dev \
-            libjsoncpp-dev
+            wget \
+            xz-utils
+
+      - name: Build and install libgpiod v2
+        run: |
+          cd /tmp
+          wget https://mirrors.edge.kernel.org/pub/software/libs/libgpiod/libgpiod-${LIBGPIOD_VERSION}.tar.xz
+          tar -xf libgpiod-${LIBGPIOD_VERSION}.tar.xz
+          cd libgpiod-${LIBGPIOD_VERSION}
+          ./configure --prefix=/usr/local --enable-tools
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Verify libgpiod version
+        run: |
+          pkg-config --modversion libgpiod
+          gpioinfo --version || true
+          test -f external/libgpiod_event_demo/gpioevent.h
 
       - name: Configure
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
         run: |
           cmake -S . -B build \
             -G Ninja \
@@ -45,9 +69,14 @@ jobs:
             -DCMAKE_VERBOSE_MAKEFILE=ON
 
       - name: Build
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
         run: |
           cmake --build build --parallel --verbose
 
       - name: Run tests
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LD_LIBRARY_PATH }}
         run: |
           ctest --test-dir build --output-on-failure --verbose
