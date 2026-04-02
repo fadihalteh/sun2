@@ -279,7 +279,8 @@ sequenceDiagram
     SM->>SD: stop()
     SM->>SM: state = IDLE
 ```
-Circuit Diagram
+---
+## Circuit Diagram
 <p align="center"> <img src="diagrams/circuit_diagram.png" alt="Circuit Diagram" width="900"> </p>
 
 The hardware setup connects:
