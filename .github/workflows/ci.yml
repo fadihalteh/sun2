@@ -17,6 +17,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify external dependencies
+        run: |
+          test -f external/libgpiod_event_demo/gpioevent.h
+          ls -R external | head -200
 
       - name: Install dependencies
         run: |
@@ -33,12 +41,13 @@ jobs:
         run: |
           cmake -S . -B build \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_VERBOSE_MAKEFILE=ON
 
       - name: Build
         run: |
-          cmake --build build --parallel
+          cmake --build build --parallel --verbose
 
       - name: Run tests
         run: |
-          ctest --test-dir build --output-on-failure
+          ctest --test-dir build --output-on-failure --verbose
