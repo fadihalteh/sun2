@@ -11,7 +11,11 @@ target_include_directories(test_system PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(test_system PRIVATE solar_system)
+target_link_libraries(test_system PRIVATE
+    solar_system
+    solar_app
+)
+
 solar_enable_coverage(test_system)
 
 add_test(NAME SystemManager_start_to_searching_then_tracking_on_bright_frame COMMAND test_system --run SystemManager_start_to_searching_then_tracking_on_bright_frame)
