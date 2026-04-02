@@ -456,17 +456,11 @@ MainWindow::MainWindow(SystemManager& sys, QWidget* parent)
 
     connect(pan_, &QSlider::valueChanged, this, [this](const int v) {
         panVal_->setText(QString::number(v));
+        sendManual_();
     });
 
     connect(tilt_, &QSlider::valueChanged, this, [this](const int v) {
         tiltVal_->setText(QString::number(v));
-    });
-
-    connect(pan_, &QSlider::sliderReleased, this, [this]() {
-        sendManual_();
-    });
-
-    connect(tilt_, &QSlider::sliderReleased, this, [this]() {
         sendManual_();
     });
 

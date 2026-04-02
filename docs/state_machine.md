@@ -11,9 +11,9 @@ This document defines the runtime behaviour of the system as a state machine. It
 | IDLE | System not running | No motion |
 | STARTUP | Initialisation in progress | Startup sequence in progress |
 | NEUTRAL | Transitional safe positioning state | Configured startup park applied |
-| SEARCHING | Target not confidently detected | Continuous processing with safe behaviour |
-| TRACKING | Target detected with sufficient confidence | Normal closed-loop updates |
-| MANUAL | User controls setpoint | Manual input mapped to actuator path |
+| SEARCHING | Target not confidently detected | Continuous automatic processing with safe behaviour |
+| TRACKING | Target detected with sufficient confidence | Normal closed-loop automatic updates |
+| MANUAL | User controls setpoint | Manual target is applied continuously through the control thread |
 | STOPPING | Shutdown in progress | Controlled stop sequence |
 | FAULT | Failure state | Outputs stopped or held safe |
 
@@ -26,7 +26,7 @@ This document defines the runtime behaviour of the system as a state machine. It
 | IDLE | STARTUP | `start()` called |
 | STARTUP | FAULT | camera null, driver start failure, manual backend failure, or camera start failure |
 | STARTUP | NEUTRAL | successful initialisation |
-| NEUTRAL | SEARCHING | startup park applied and `startup_mode == Auto` (default) |
+| NEUTRAL | SEARCHING | startup park applied and `startup_mode == Auto` |
 | NEUTRAL | MANUAL | startup park applied and `startup_mode == Manual` |
 | SEARCHING | TRACKING | confidence ≥ threshold |
 | TRACKING | SEARCHING | confidence < threshold |
@@ -42,10 +42,6 @@ This document defines the runtime behaviour of the system as a state machine. It
 | FAULT | STOPPING | `stop()` called |
 | STOPPING | IDLE | shutdown complete |
 | ANY ACTIVE STATE | FAULT | critical runtime failure |
-
-Reacquisition behaviour is handled through **TRACKING ↔ SEARCHING** based on confidence threshold.
-
-The NEUTRAL → MANUAL path is triggered by startup configuration (`AppConfig::StartupMode::Manual`), not by a user call. This is distinct from the runtime `enterManual()` path available from SEARCHING, TRACKING, and NEUTRAL.
 
 ---
 
@@ -68,17 +64,15 @@ Initialisation phase.
 - actuator driver started
 - queues reset
 - worker threads started
-- backend coordinator started (ADS1115, MPU6050)
+- backend coordinator started
 - camera streaming started
-- any failure leads to FAULT
+- failures lead to FAULT
 
 ### NEUTRAL
 
 Short transitional state.
 
-- startup park is applied using predefined actuator values (default: 41°)
-- direct actuator command is issued
-- no kinematic solve is performed
+- startup park is applied using predefined actuator values
 - transitions to SEARCHING (default) or MANUAL (if `startup_mode == Manual`)
 
 ### SEARCHING
@@ -86,7 +80,7 @@ Short transitional state.
 System is active but target confidence is low.
 
 - frames are processed continuously
-- full pipeline remains active
+- full automatic pipeline remains active
 - motion remains bounded
 - transitions to TRACKING when confidence increases
 
@@ -94,8 +88,8 @@ System is active but target confidence is low.
 
 System operates in closed-loop tracking mode.
 
-- each frame triggers full processing path
-- control, kinematics, and actuator stages are active
+- each frame triggers full automatic processing path
+- controller, correction, kinematics, and actuator stages are active
 - continuous actuator updates
 - transitions back to SEARCHING if confidence drops
 
@@ -103,12 +97,20 @@ System operates in closed-loop tracking mode.
 
 User-controlled mode.
 
-- activated via `enterManual()` or by `startup_mode == Manual` at startup
-- automatic control updates are disabled
-- user input generates platform setpoints via potentiometers (`ManualCommandSource::Pot`) or GUI (`ManualCommandSource::Gui`)
-- setpoints are bounded before use
-- data still flows through kinematics and actuator stages
-- exits via `exitManual()` to SEARCHING
+- activated via `enterManual()` or by `startup_mode == Manual`
+- automatic controller updates are disabled
+- the control thread still wakes on the normal frame/control cadence
+- GUI slider movement updates the stored GUI target continuously
+- ADS1115 callbacks update the latest potentiometer sample
+- the control thread builds the current manual setpoint and forwards it downstream
+- the downstream path remains `Kinematics3RRS → ActuatorManager → ServoDriver`
+
+Two manual command sources are supported:
+
+- `ManualCommandSource::Gui`
+- `ManualCommandSource::Pot`
+
+By default, GUI manual mode does not apply live IMU correction. This avoids fighting the operator-selected manual target with IMU noise.
 
 ### STOPPING
 
@@ -119,8 +121,7 @@ Shutdown sequence.
 - backend coordinator stopped
 - frame and command queues stopped
 - processing threads joined
-- neutral command applied through kinematics
-- actuator thread stopped
+- neutral command applied
 - driver stopped
 - transitions to IDLE
 
@@ -130,7 +131,6 @@ Failure state.
 
 - triggered by null camera, driver failure, backend failure, camera start failure, or invalid kinematics result
 - actuator commands are halted or suppressed
-- no further commands propagated
 - system requires explicit stop to recover
 
 ---
@@ -180,25 +180,23 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     A["start()"] --> B["set STARTUP"]
-
     B --> C{"camera null?"}
     C -- yes --> F1["set FAULT"]
 
     C -- no --> D{"driver start ok?"}
     D -- no --> F2["set FAULT"]
 
-    D -- yes --> E["reset queues"]
+    D -- yes --> E["reset queues / reset manual state"]
     E --> G["start worker threads"]
 
     G --> H{"backends start ok?"}
-    H -- manual fail --> F3["stop and set FAULT"]
-    H -- IMU fail in Live mode --> F3
+    H -- fail --> F3["stop and set FAULT"]
 
     H -- ok --> I{"camera start ok?"}
     I -- no --> F4["stop and set FAULT"]
 
     I -- yes --> J["set NEUTRAL"]
-    J --> K["apply startup park (41°)"]
+    J --> K["apply startup park"]
 
     K --> L{"startup_mode?"}
     L -- Manual --> M["set MANUAL"]
@@ -209,9 +207,8 @@ flowchart TD
     Q --> R["backends stop"]
     R --> S["stop queues and join threads"]
     S --> T["apply neutral command"]
-    T --> U["stop actuator thread"]
-    U --> V["driver stop"]
-    V --> W["set IDLE"]
+    T --> U["driver stop"]
+    U --> W["set IDLE"]
 ```
 
 ---
@@ -221,46 +218,40 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[Frame event] --> B[frame queue]
-    B --> C[processing thread]
+    B --> C[control thread wake]
 
-    C --> D[SunTracker]
-    D --> E[SunEstimate]
+    C --> D{state?}
 
-    E --> F{state SEARCHING or TRACKING?}
+    D -- SEARCHING/TRACKING --> E[SunTracker]
+    E --> F[SunEstimate]
+    F --> G[Controller]
+    G --> H[ManualImuCoordinator apply correction]
+    H --> I[Kinematics3RRS]
+    I --> J[command queue]
+    J --> K[actuator thread]
+    K --> L[ActuatorManager]
+    L --> M[ServoDriver]
 
-    F -- no --> G[skip controller]
-
-    F -- yes --> H[update state from confidence]
-    H --> I[Controller]
-
-    I --> J[ManualImuCoordinator]
-    J --> K[Kinematics3RRS]
-
-    K --> L{valid command?}
-    L -- no --> M[set FAULT]
-    L -- yes --> N[command queue]
-
-    N --> O[actuator thread]
-    O --> P[ActuatorManager]
-    P --> Q[ServoDriver]
-
-    R[enterManual / startup_mode=Manual] --> S[set MANUAL]
-    S --> T[manual setpoint]
-    T --> U[clamp values]
-    U --> J
-
-    V[exitManual] --> W[set SEARCHING]
+    D -- MANUAL --> N[submitManualSetpointFromControlTick_]
+    O[GUI valueChanged] --> P[store GUI target]
+    Q[ADS1115 callback] --> R[store latest pot sample]
+    P --> N
+    R --> N
+    N --> S[ManualImuCoordinator build manual setpoint]
+    S --> T{source == GUI?}
+    T -- yes --> I
+    T -- no --> U[optional IMU correction]
+    U --> I
 ```
 
 ---
 
 ## 7. Implementation Notes
 
-- startup neutral positioning uses direct actuator commands (no kinematics)
-- shutdown neutral positioning uses kinematic mapping
 - automatic processing runs only in SEARCHING and TRACKING
-- manual commands bypass automatic control but follow the same actuator path from `ManualImuCoordinator` onward
+- manual callbacks no longer directly drive downstream kinematics work
+- manual commands are continuous because the control thread consumes manual state on each control tick
+- GUI manual mode is continuous while dragging the slider
+- GUI manual mode does not use Qt timers as a control timing source
 - invalid kinematic results prevent actuation and trigger FAULT
 - state transitions are explicit and centrally controlled in `SystemManager`
-- no implicit transitions or hidden state changes
-- IMU backend failure in Shadow mode degrades gracefully; failure in Live mode triggers FAULT

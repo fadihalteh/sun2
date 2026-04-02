@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document analyses the realtime-relevant design choices in the repository. All observations are grounded in the actual source files visible in the snapshot.
+This document analyses the realtime-relevant design choices in the repository. All observations are grounded in the current source files visible in the snapshot.
 
 ---
 
@@ -29,7 +29,7 @@ There is no top-level polling loop, no `sleep()`-based pacing, and no busy-waiti
 | `timerfd` (`CLOCK_MONOTONIC`) | Configurable tick rate (default 30 Hz) | CLI servicing |
 | `stdin` (dup'd) | Terminal | Keyboard command input |
 
-The loop does not wake on anything else. Between events it is fully blocked in the kernel. The comment in the source is explicit: *"The event loop blocks in poll() and only wakes on timer, stdin, or signal activity."*
+The loop does not wake on anything else. Between events it is fully blocked in the kernel.
 
 This means the headless runtime has zero CPU cost while idle — it is structurally incapable of a busy-wait.
 
@@ -46,9 +46,7 @@ Two queue instances are declared in `SystemManager`:
 | `frame_q_` | `ThreadSafeQueue<FrameEvent>` | 2 | `push_latest()` — drops oldest |
 | `cmd_q_` | `ThreadSafeQueue<ActuatorCommand>` | 8 | `push_latest()` — drops oldest |
 
-The `push_latest()` policy is the correct choice for this system: if a consumer thread falls behind, it processes the most recent data rather than working through a stale backlog. The bounded capacity prevents unbounded memory growth under load.
-
-`stop()` sets a flag and calls `cv_.notify_all()`, which guarantees blocked threads are always woken cleanly on shutdown.
+The `push_latest()` policy is appropriate for this system: if a consumer thread falls behind, it processes the most recent data rather than working through a stale backlog. The bounded capacity prevents unbounded memory growth under load.
 
 ---
 
@@ -58,125 +56,132 @@ The `push_latest()` policy is the correct choice for this system: if a consumer 
 
 ### Control Thread — `controlLoop_()`
 
-```cpp
-while (true) {
-    const auto item = frame_q_.wait_pop();
-    if (!item.has_value()) { break; }
-    ...
-    tracker_.onFrame(*item);
-}
-```
+The control thread blocks on `frame_q_.wait_pop()`. The same blocking wakeups are now reused for both automatic and manual processing:
 
-Blocks unconditionally on `frame_q_.wait_pop()`. Wakes only when a frame arrives or the queue is stopped. There is no sleep, no poll interval, no timeout.
+- in SEARCHING/TRACKING, the thread forwards the frame into `SunTracker`
+- in MANUAL, the thread calls `submitManualSetpointFromControlTick_(...)` and builds the current manual setpoint from stored GUI target state or the latest potentiometer sample
+
+This means manual mode is continuous without introducing a separate timer loop, GUI-driven control loop, or polling thread.
 
 ### Actuator Thread — `actuatorLoop_()`
 
-```cpp
-while (true) {
-    const auto item = cmd_q_.wait_pop();
-    if (!item.has_value()) { break; }
-    ...
-    actuatorMgr_.onCommand(*item);
-}
+The actuator thread blocks on `cmd_q_.wait_pop()` and applies:
+
+`ActuatorManager -> ServoDriver`
+
+There is no alternative actuation shortcut.
+
+---
+
+## 5. Sensor Wakeups
+
+### Camera
+
+- `SimulatedPublisher` uses `timerfd` + `poll()` + `eventfd`
+- `LibcameraPublisher` uses callback delivery from the libcamera wrapper path
+
+### Manual potentiometer input
+
+`ADS1115ManualInput` uses the ADS1115 ALERT/RDY GPIO edge to wake the acquisition path. The callback updates the latest manual potentiometer sample, but does not directly perform downstream kinematics work.
+
+### IMU
+
+`Mpu6050Publisher` uses a GPIO data-ready interrupt path. IMU samples are forwarded into `ManualImuCoordinator`.
+
+---
+
+## 6. Automatic and Manual Paths
+
+### Automatic path
+
+```text
+Frame callback
+→ frame_q_.push_latest(...)
+→ control thread wait_pop()
+→ SunTracker
+→ Controller
+→ ManualImuCoordinator::applyImuCorrection(...)
+→ Kinematics3RRS
+→ cmd_q_.push_latest(...)
+→ actuator thread wait_pop()
+→ ActuatorManager
+→ ServoDriver
 ```
 
-Same structure — blocks on `cmd_q_.wait_pop()` and wakes only on data or stop.
+### Manual path after refactor
 
-Both threads are joined cleanly on shutdown.
-
----
-
-## 5. Camera Callback and Frame Ingestion
-
-Incoming frames are delivered via camera callback and pushed into `frame_q_` using `push_latest()`:
-
-```cpp
-void SystemManager::onFrame_(const FrameEvent& fe) {
-    latency_.onCapture(fe.frame_id, fe.t_capture);
-    ...
-    (void)frame_q_.push_latest(fe);
-}
+```text
+GUI slider valueChanged / ADS1115 callback
+→ store latest manual state only
+→ control thread wait_pop()
+→ submitManualSetpointFromControlTick_(...)
+→ ManualImuCoordinator builds manual setpoint
+→ Kinematics3RRS
+→ cmd_q_.push_latest(...)
+→ actuator thread wait_pop()
+→ ActuatorManager
+→ ServoDriver
 ```
 
-The `LatencyMonitor` timestamp (`t_capture`) is recorded at the moment the frame enters the pipeline, before any processing. This is the correct point for measuring software-side latency from frame arrival to actuator output.
+This is not identical to the automatic path, but it is materially cleaner than a direct GUI/callback-to-kinematics shortcut and keeps timing ownership inside the blocking-wakeup runtime.
 
 ---
 
-## 6. Hardware Sensor Event Paths
+## 7. Qt GUI Timing
 
-### ADS1115 Manual Input
+Qt timers are used for GUI refresh and charts, not for reliable control timing.
 
-`src/sensors/manual/ADS1115ManualInput.cpp` uses the ALERT/RDY GPIO pin as a hardware interrupt. The source comment is explicit: *"Configure the ADC once, then let the ALERT/RDY pin wake the sample callback."*
+The GUI manual sliders now update the stored GUI target on `valueChanged`, but the GUI still does not own the control cadence. The actual continuous command submission happens in the control thread on the same blocking wakeups used elsewhere in the runtime.
 
-A falling edge on the GPIO pin triggers the registered callback via `libgpiod`:
+This is the critical distinction:
 
-```cpp
-drdy_pin_->registerCallback([this](const gpiod::edge_event& event) { ... });
-```
-
-No polling of the ADC register. Samples arrive only when the hardware asserts the pin.
-
-### MPU6050 IMU
-
-`src/sensors/imu/Mpu6050Publisher.cpp` uses the same pattern. The source comment: *"The GPIO edge is the wake-up event; I2C transfer only happens after the edge arrives."*
-
-```cpp
-gpio_pin_.registerCallback([this](const gpiod::edge_event& event) {
-    onGpioEvent_(event);
-});
-```
-
-I2C register reads happen only after a rising or falling edge is received. This is the correct pattern for interrupt-driven IMU integration.
+- **GUI:** updates desired manual state
+- **control thread:** turns that state into continuous actuator-driving setpoints
 
 ---
 
-## 7. Simulated Camera Path
+## 8. IMU Policy in Manual Mode
 
-`src/sensors/SimulatedPublisher.cpp` is the non-hardware camera backend. The original version of this analysis described it as sleep-based. **That is no longer accurate.** The source comment in the current snapshot is unambiguous:
+GUI manual mode does **not** apply live IMU correction by default. This is deliberate:
 
-> *"The simulator still uses the normal camera callback path, but it now sleeps on Linux file descriptors instead of using sleep-based pacing."*
+- it keeps operator-selected manual targets stable
+- it avoids injecting IMU noise into every GUI manual update
+- it reduces the risk of chatter or vibration
 
-The worker thread multiplexes a `timerfd` and a wakeup `eventfd` via `poll()`:
-
-```cpp
-pollfd fds[2]{};
-fds[0].fd = timer_fd_;   // timerfd: frame pacing
-fds[1].fd = wake_fd_;    // eventfd: clean stop signal
-...
-const int ret = ::poll(fds, 2, -1);
-```
-
-The stop path writes to the `eventfd`, which wakes the blocked `poll()` immediately. This is the same structural pattern as `LinuxEventLoop` — blocking on file descriptors, not sleeping. The simulated path no longer diverges from the production event model.
+Pot/manual mode can still use IMU-assisted behaviour according to the configured policy.
 
 ---
 
-## 8. GUI Role
+## 9. Shutdown Behaviour
 
-`src/qt/MainWindow.cpp` registers observers on the runtime and uses Qt timers for view refresh. The main processing pipeline is independent of the GUI — the GUI observes and commands the runtime but does not own the realtime execution path. This is architecturally correct for a system where the GUI must remain optional.
+`stop()`:
+
+- stops the camera
+- stops optional backends
+- stops the frame and command queues
+- joins the worker threads
+- applies neutral/park logic
+- stops the servo driver
+
+Because the queues notify blocked waiters on stop, worker threads wake cleanly and do not hang in shutdown.
 
 ---
-
-## 9. Honest Weaknesses
-
-- `SystemManager` is a broad orchestration class. An ideal design might narrow its scope further.
-- `src/qt/main_qt.cpp` contains runtime configuration policy that could be pushed closer to `SystemFactory`.
-- The snapshot alone cannot prove hosted CI history, physical actuator behaviour, or worst-case scheduling behaviour under all OS load conditions.
-
-These are real observations but do not affect the correctness of the core event-driven structure.
-
----
-
 ## 10. Summary
 
-Every blocking point in the system is a proper Linux blocking primitive:
+The runtime follows a single, consistent execution model across the entire system:
 
-| Component | Blocking Mechanism |
-|---|---|
-| `LinuxEventLoop` | `poll()` on `signalfd`, `timerfd`, `stdin` |
-| Control thread | `condition_variable::wait()` via `frame_q_.wait_pop()` |
-| Actuator thread | `condition_variable::wait()` via `cmd_q_.wait_pop()` |
-| ADS1115 input | GPIO ALERT/RDY edge via `libgpiod` callback |
-| MPU6050 IMU | GPIO data-ready edge via `libgpiod` callback |
-| SimulatedPublisher | `poll()` on `timerfd` + `eventfd` |
+- all long-lived threads block on kernel-backed primitives (`poll`, `condition_variable`)
+- all wakeups originate from real events (file descriptors, queue notifications, GPIO edges)
+- no component introduces sleep-based pacing, polling loops, or independent timing sources
 
-There is no polling loop, no sleep-based pacing, and no busy-waiting anywhere in the system. The architecture is consistently event-driven from the application event loop down to the hardware sensor backends.
+Control authority is centralised in the control thread. It is the only component responsible for transforming input state into actuator commands.
+
+All input sources, including camera frames, manual GUI inputs, and hardware sensor data, are first reduced to state and then processed within the control thread. No external callback or UI event directly drives kinematics or actuator output.
+
+As a result:
+
+- automatic and manual operation share the same execution pipeline
+- actuator commands originate from a single thread with deterministic ordering
+- the GUI remains strictly non-realtime and does not influence control timing
+
+The system is fully event-driven, with clear ownership of execution, data flow, and actuation, and without hidden timing paths or parallel control mechanisms.

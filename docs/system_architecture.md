@@ -2,13 +2,13 @@
 
 ## Overview
 
-The system is structured as a staged, event-driven pipeline in Linux userspace. Frame acquisition, tracking, control, kinematic mapping, and actuator output are separated into distinct classes so that each stage has a clear responsibility and a bounded interface. This is consistent with the taught ENG5220 architecture of sensor events propagating through callbacks and typed data transformations to control outputs.
+The system is structured as a staged, event-driven pipeline in Linux userspace. Frame acquisition, tracking, control, kinematic mapping, and actuator output are separated into distinct classes so that each stage has a clear responsibility and a bounded interface. This is consistent with the taught architecture of sensor events propagating through callbacks and typed data transformations to control outputs.
 
-The implemented processing path is:
+The implemented automatic processing path is:
 
 **ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-`SystemManager` orchestrates this pipeline, manages runtime state, starts and stops backends, and coordinates the worker threads. `SystemFactory` acts as the composition root that assembles the concrete runtime graph.
+`SystemManager` orchestrates this pipeline, manages runtime state, starts and stops backends, and coordinates the worker threads. `SystemFactory` acts as the primary top-level assembly point for the application.
 
 This class structure is stronger than a monolithic alternative because it separates:
 
@@ -25,17 +25,26 @@ That separation improves maintainability, reduces coupling, and makes the realti
 
 ## Architectural Rationale
 
-The core design decision is to preserve a forward-only event path through specialised classes instead of building one large tracker class. In this repository, each stage transforms one well-defined form of data into the next:
+The core design decision is to preserve a forward-only event path through specialised classes instead of building one large tracker class. In this repository, each stage transforms one well-defined form of data into the next.
+
+For automatic tracking:
 
 - the camera backend emits frames
 - the tracker estimates target position and confidence
 - the controller converts that estimate into a platform command
-- the manual/IMU coordination layer adjusts command ownership and optional correction
+- the manual/IMU coordination layer applies optional correction
 - the kinematics layer maps platform motion into actuator-space commands
 - the actuator manager applies command conditioning and output safety policy
 - the servo driver performs final calibrated output to the physical device
 
-This staged structure is appropriate for ENG5220 because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
+For manual mode:
+
+- GUI slider changes update a stored GUI manual target
+- ADS1115 callbacks update the latest potentiometer sample
+- the control thread consumes the current manual state on each control tick
+- the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` path is used
+
+This staged structure is appropriate because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
 
 ---
 
@@ -61,6 +70,7 @@ class SystemManager {
   +registerLatencyObserver(cb) void
   -onFrame_(fe) void
   -controlLoop_() void
+  -submitManualSetpointFromControlTick_(frame_id, t_control) void
   -actuatorLoop_() void
   -setState_(s) void
   -applyNeutralOnce_() void
@@ -125,10 +135,11 @@ class LatencyMonitor {
 
 class ManualImuCoordinator {
   +setManualCommandSource(src) void
+  +manualCommandSource() ManualCommandSource
   +updateImuSample(sample) void
   +applyImuCorrection(sp) PlatformSetpoint
-  +buildManualSetpointFromPot(sample, state, frame_id, t) PlatformSetpoint
-  +buildManualSetpointFromGui(tilt, pan, frame_id, t) PlatformSetpoint
+  +buildManualSetpointFromPot(sample, state, frame_id, t, sp) bool
+  +buildManualSetpointFromGui(tilt, pan, state, frame_id, t, sp) bool
 }
 
 class ADS1115ManualInput {
@@ -234,16 +245,21 @@ AM-->>AT: SafeCommandCallback(ActuatorCommand)
 AT->>LM: onActuate(frame_id, t_actuate)
 AT->>SD: apply(ActuatorCommand)
 ```
+
 ---
 
 ## Diagram 2.2 — Sequence Diagram — Manual Input + IMU Update Paths
+
 ```mermaid
 sequenceDiagram
 autonumber
 
 participant ADS as ADS1115ManualInput
 participant IMU as Mpu6050Publisher
+participant User as Qt / CLI User
 participant SM as SystemManager
+participant FQ as FrameQueue cap=2
+participant CT as Control thread
 participant MIC as ManualImuCoordinator
 participant K as Kinematics3RRS
 participant CQ as CommandQueue cap=8
@@ -251,9 +267,8 @@ participant AT as Actuator thread
 participant AM as ActuatorManager
 participant SD as ServoDriver
 participant LM as LatencyMonitor
-participant User as Qt / CLI User
 
-IMU-->>SM: Imu callback(sample)
+IMU-->>SM: IMU callback(sample)
 SM->>MIC: updateImuSample(sample)
 
 User->>SM: enterManual()
@@ -262,16 +277,31 @@ SM->>SM: setState(MANUAL)
 
 alt Pot-controlled manual mode
   ADS-->>SM: Manual sample callback(sample)
-  SM->>MIC: buildManualSetpointFromPot(sample, state, frame_id, t)
-  MIC-->>SM: PlatformSetpoint
+  SM->>SM: store latest pot sample
 else GUI-controlled manual mode
   User->>SM: setManualSetpoint(tilt, pan)
-  SM->>MIC: buildManualSetpointFromGui(tilt, pan, frame_id, t)
+  SM->>SM: store latest GUI target
+end
+
+Note over CT,FQ: Existing control thread timing is reused
+
+CT->>FQ: wait_pop()
+FQ-->>CT: FrameEvent / control tick
+CT->>SM: submitManualSetpointFromControlTick_(frame_id, t_control)
+
+alt Pot source
+  SM->>MIC: buildManualSetpointFromPot(sample, state, frame_id, t_control, sp)
   MIC-->>SM: PlatformSetpoint
+  SM->>MIC: applyImuCorrection(sp)
+  MIC-->>SM: corrected PlatformSetpoint
+else GUI source
+  SM->>MIC: buildManualSetpointFromGui(tilt, pan, state, frame_id, t_control, sp)
+  MIC-->>SM: PlatformSetpoint
+  Note over SM: GUI manual mode does not apply live IMU correction by default
 end
 
 SM->>LM: onControl(frame_id, t_control)
-SM->>K: onSetpoint(PlatformSetpoint)
+SM->>K: onSetpoint(final PlatformSetpoint)
 K-->>SM: CommandCallback(ActuatorCommand)
 SM->>CQ: push_latest(ActuatorCommand)
 
@@ -285,7 +315,9 @@ AT->>SD: apply(ActuatorCommand)
 User->>SM: exitManual()
 SM->>SM: setState(SEARCHING)
 ```
+
 ---
+
 ## Diagram 3 — Component Diagram
 
 ```mermaid
@@ -317,6 +349,8 @@ flowchart LR
   subgraph ManualInput["Manual Input"]
     ADS["ADS1115ManualInput"]
     Pot["Tilt / Pan Pots"]
+    GuiTarget["Stored GUI target"]
+    PotSample["Latest pot sample"]
   end
 
   subgraph ImuFeedback["IMU Feedback"]
@@ -340,31 +374,38 @@ flowchart LR
   AM --> SD
 
   ADS -->|manual sample callback| SM
-  Pot --> ADS
+  SM --> PotSample
+  QT -->|valueChanged / setManualSetpoint| SM
+  SM --> GuiTarget
   MPU -->|IMU callback| SM
   SM --> MIC
 
   SM --> LM
 ```
+
 ---
+
 ## Diagram 4 — Threaded Event Architecture
+
 ```mermaid
 flowchart TB
   CAM["Camera backend<br/>libcamera or simulated"]
   ADS["ADS1115 manual input"]
   MPU["MPU6050 IMU"]
-  PI["Qt / CLI user input"]
+  UI["Qt / CLI manual input"]
 
   subgraph T1["Callback / producer side"]
     CAMCB["Frame callback"]
     ADSCB["Manual sample callback"]
     MPUCB["IMU callback"]
+    UICB["GUI / CLI target update"]
   end
 
   subgraph T2["Control thread"]
     FQ["FrameQueue cap=2"]
     ST["SunTracker"]
     CTRL["Controller"]
+    MAN["submitManualSetpointFromControlTick_"]
     MIC["ManualImuCoordinator"]
     KIN["Kinematics3RRS"]
     CQ["CommandQueue cap=8"]
@@ -377,19 +418,20 @@ flowchart TB
 
   CAM --> CAMCB --> FQ
   FQ --> ST --> CTRL --> MIC --> KIN --> CQ
-  CQ --> ACT --> SERVO
-
-  ADS --> ADSCB --> MIC
+  FQ --> MAN --> MIC
+  ADS --> ADSCB --> MAN
+  UI --> UICB --> MAN
   MPU --> MPUCB --> MIC
-  PI --> MIC
+  CQ --> ACT --> SERVO
 ```
+
 ---
 
 ## Component Responsibilities
 
 ### SystemManager
 
-Coordinates runtime execution, manages threads, processes incoming events, and controls system state. It connects all pipeline stages and ensures correct execution order.
+Coordinates runtime execution, manages threads, processes incoming events, and controls system state. It also stores manual GUI targets and the latest potentiometer sample, but only the control thread is allowed to turn that manual state into downstream kinematics work.
 
 ### ICamera and Camera Backends
 
@@ -405,7 +447,7 @@ Transforms the target estimate into a platform-level motion command.
 
 ### ManualImuCoordinator
 
-Handles manual input and optional IMU-based adjustments. It determines command ownership and applies corrections where required.
+Handles manual input ownership and optional IMU-based adjustments. It builds manual setpoints and applies IMU correction where allowed by mode/source policy.
 
 ### Kinematics3RRS
 
@@ -442,4 +484,6 @@ The inter-thread queues are intentionally bounded:
 - Frame queue capacity is small (2) to minimise latency and prevent stale frames accumulating.
 - Command queue capacity is larger (8) to absorb short bursts without dropping actuator updates prematurely.
 
-Both queues use a latest-wins policy, ensuring that the system prioritises current data while maintaining bounded memory and predictabl
+Both queues use a latest-wins policy, ensuring that the system prioritises current data while maintaining bounded memory and predictable behaviour.
+
+

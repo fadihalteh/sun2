@@ -4,27 +4,31 @@
 
 This repository is an ENG5220 real-time embedded programming project implementing a Stewart-platform solar tracker on Raspberry Pi/Linux userspace.
 
-The system observes a camera stream, locates the brightest target region, converts that image-space error into platform tilt and pan demands, maps those demands into three actuator commands, applies final output conditioning, and drives the platform through the servo hardware path.
+The system observes a camera stream, locates the brightest target region, converts that image-space error into platform tilt and pan demands, maps those demands into actuator commands, applies final output conditioning, and drives the platform through the servo hardware path.
 
 ---
 
 ## End-to-End Behaviour
 
-The implemented runtime pipeline is:
+The automatic runtime pipeline is:
 
 ```text
-Camera → SunTracker → Controller → Kinematics3RRS → ActuatorManager → ServoDriver
+Camera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver
 ```
 
-This pipeline is visible directly in the staged source tree:
-- `src/vision/SunTracker.cpp`
-- `src/control/Controller.cpp`
-- `src/control/Kinematics3RRS.cpp`
-- `src/actuators/ActuatorManager.cpp`
-- `src/actuators/ServoDriver.cpp`
+This staged flow is orchestrated in `src/system/SystemManager.cpp`.
 
-and is orchestrated in:
-- `src/system/SystemManager.cpp`
+Manual mode uses the same downstream actuation path, but the ingress behaviour is now cleaner:
+
+```text
+GUI valueChanged / ADS1115 callback
+→ store latest manual state
+→ control thread tick
+→ ManualImuCoordinator builds manual setpoint
+→ Kinematics3RRS → ActuatorManager → ServoDriver
+```
+
+This means manual mode is continuous without turning the GUI into the timing source.
 
 ---
 
@@ -33,7 +37,7 @@ and is orchestrated in:
 The current repository snapshot supports:
 
 - automatic tracking
-- manual mode
+- manual mode from GUI or potentiometers
 - IMU observation or live correction path
 - headless Linux event-loop execution
 - Qt GUI execution
@@ -43,8 +47,6 @@ The current repository snapshot supports:
 - latency CSV generation
 - Doxygen generation
 - release packaging workflow
-
-These claims are grounded in the actual files present in the zip.
 
 ---
 
@@ -82,7 +84,8 @@ These claims are grounded in the actual files present in the zip.
 
 ### System orchestration
 - `src/system/SystemManager.cpp`
-- `include/system/TrackerState.hpp`
+- `src/system/SystemManager.hpp`
+- `src/system/TrackerState.hpp`
 
 ### GUI
 - `src/qt/MainWindow.cpp`
@@ -90,27 +93,9 @@ These claims are grounded in the actual files present in the zip.
 
 ---
 
-## Build Targets Visible in the Snapshot
-
-The top-level `CMakeLists.txt` declares these visible targets:
-
-- `cam2opencv`
-- `solar_tracker_core`
-- `solar_tracker`
-- `solar_tracker_qt`
-
-The important application targets are:
-- `solar_tracker`
-- `solar_tracker_qt`
-
-The main library target is:
-- `solar_tracker_core`
-
----
-
 ## Runtime Modes and Backends
 
-Configuration in `include/app/AppConfig.hpp` and `src/app/AppConfig.cpp` shows support for:
+Configuration supports:
 
 - `CameraBackend::Simulated`
 - `CameraBackend::Libcamera`
@@ -122,19 +107,14 @@ Configuration in `include/app/AppConfig.hpp` and `src/app/AppConfig.cpp` shows s
 - `ImuFeedbackMode::Shadow`
 - `ImuFeedbackMode::Live`
 
----
+Manual mode also distinguishes command ownership between:
 
-## Honest Limits of This Snapshot
+- `ManualCommandSource::Gui`
+- `ManualCommandSource::Pot`
 
-To keep this overview honest:
-
-- the zip snapshot does not itself prove GitHub issue or PR history,
-- `src/qt/main_qt.cpp` still contains runtime configuration policy that is broader than an ideal minimal `main()`,
-- `SystemManager` is broader than an absolutely minimal orchestration class,
-- the simulation backend exists as a support path and should not be confused with the main hardware proof path.
 
 ---
 
 ## Summary
 
-This project is a real-time, event-driven Stewart-platform solar tracker implemented as a staged Linux userspace system. The repository snapshot already contains the code, tests, scripts, workflows, and latency artifact required to describe a serious ENG5220 submission rather than a one-file prototype.
+This project is a real-time, event-driven Stewart-platform solar tracker implemented as a staged Linux userspace system. The current snapshot includes a cleaner manual path in which GUI and potentiometer inputs update manual state and the control thread owns continuous manual setpoint submission.
