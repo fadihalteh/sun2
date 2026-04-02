@@ -18,10 +18,12 @@ This project implements an event-driven pipeline in which camera frames are deli
 <p align="center">
   <img src="media/model.jpeg" alt="System Model" width="750">
 </p>
+
 ---
 <p align="center">
+  <strong>Explore the full generated developer reference, architecture pages, and API documentation.</strong><br>
   📘 <a href="https://real-time-stewart-solar-tracker.github.io/Solar-Stewart-Tracker/">
-    Doxygen Documentation 
+    Doxygen Documentation
   </a>
 </p>
 
