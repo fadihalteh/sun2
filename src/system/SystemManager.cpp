@@ -6,7 +6,9 @@
 #include "sensors/imu/Mpu6050Publisher.hpp"
 #include "sensors/manual/ADS1115ManualInput.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -412,6 +414,13 @@ bool SystemManager::start() {
     actuatorMgr_.resetHistory();
     manual_imu_.reset();
 
+    {
+        std::lock_guard<std::mutex> lk(manual_pot_mtx_);
+        latest_manual_pot_sample_.reset();
+    }
+    manual_gui_tilt_rad_.store(0.0F);
+    manual_gui_pan_rad_.store(0.0F);
+
     control_thread_ = std::thread([this] {
         controlLoop_();
     });
@@ -504,7 +513,15 @@ void SystemManager::controlLoop_() {
             break;
         }
 
-        if (!canAutoProcess_(state_.load())) {
+        const TrackerState s = state_.load();
+
+        if (s == TrackerState::MANUAL) {
+            submitManualSetpointFromControlTick_(item->frame_id,
+                                                 std::chrono::steady_clock::now());
+            continue;
+        }
+
+        if (!canAutoProcess_(s)) {
             continue;
         }
 
@@ -543,42 +560,86 @@ void SystemManager::onFrame_(const FrameEvent& fe) {
 }
 
 void SystemManager::onManualPotSample_(const ManualPotSample& sample) {
-    ManualObserver manual_cb;
-    {
-        std::lock_guard<std::mutex> lk(obs_mtx_);
-        manual_cb = manual_obs_;
-    }
-    if (manual_cb) {
-        manual_cb(sample);
-    }
-
     if (!running_.load()) {
         return;
     }
 
-    PlatformSetpoint sp{};
-    if (!manual_imu_.buildManualSetpointFromPot(sample,
-                                                state_.load(),
-                                                nextSyntheticFrameId_(),
-                                                std::chrono::steady_clock::now(),
-                                                sp)) {
+    {
+        std::lock_guard<std::mutex> lk(manual_pot_mtx_);
+        latest_manual_pot_sample_ = sample;
+    }
+
+    ManualObserver cb;
+    {
+        std::lock_guard<std::mutex> lk(obs_mtx_);
+        cb = manual_obs_;
+    }
+    if (cb) {
+        cb(sample);
+    }
+}
+
+void SystemManager::submitManualSetpointFromControlTick_(
+    const std::uint64_t frame_id,
+    const std::chrono::steady_clock::time_point t_control) {
+    if (!running_.load()) {
         return;
     }
 
-    Controller::SetpointCallback cb;
+    const ManualCommandSource source = manual_imu_.manualCommandSource();
+    PlatformSetpoint sp{};
+
+    bool ok = false;
+    if (source == ManualCommandSource::Gui) {
+        ok = manual_imu_.buildManualSetpointFromGui(
+            manual_gui_tilt_rad_.load(),
+            manual_gui_pan_rad_.load(),
+            state_.load(),
+            frame_id,
+            t_control,
+            sp);
+    } else {
+        std::optional<ManualPotSample> sample;
+        {
+            std::lock_guard<std::mutex> lk(manual_pot_mtx_);
+            sample = latest_manual_pot_sample_;
+        }
+
+        if (!sample.has_value()) {
+            return;
+        }
+
+        ok = manual_imu_.buildManualSetpointFromPot(
+            *sample,
+            state_.load(),
+            frame_id,
+            t_control,
+            sp);
+    }
+
+    if (!ok) {
+        return;
+    }
+
+    Controller::SetpointCallback sp_cb;
     {
         std::lock_guard<std::mutex> lk(obs_mtx_);
-        cb = setpoint_obs_;
+        sp_cb = setpoint_obs_;
     }
-    if (cb) {
-        cb(sp);
+    if (sp_cb) {
+        sp_cb(sp);
     }
 
     latency_.onControl(sp.frame_id, sp.t_control);
 
+    PlatformSetpoint final_sp = sp;
+    if (source != ManualCommandSource::Gui) {
+        final_sp = manual_imu_.applyImuCorrection(sp);
+    }
+
     {
         std::lock_guard<std::mutex> lk(kin_mtx_);
-        kinematics_.onSetpoint(sp);
+        kinematics_.onSetpoint(final_sp);
     }
 }
 
@@ -619,36 +680,15 @@ void SystemManager::exitManual() {
     setState_(TrackerState::SEARCHING);
 }
 
-void SystemManager::setManualSetpoint(const float tilt_rad, const float pan_rad) {
+void SystemManager::setManualSetpoint(float tilt_rad, float pan_rad) {
     if (!running_.load()) {
         return;
     }
 
-    PlatformSetpoint sp{};
-    if (!manual_imu_.buildManualSetpointFromGui(tilt_rad,
-                                                pan_rad,
-                                                state_.load(),
-                                                nextSyntheticFrameId_(),
-                                                std::chrono::steady_clock::now(),
-                                                sp)) {
-        return;
-    }
-
-    Controller::SetpointCallback cb;
-    {
-        std::lock_guard<std::mutex> lk(obs_mtx_);
-        cb = setpoint_obs_;
-    }
-    if (cb) {
-        cb(sp);
-    }
-
-    latency_.onControl(sp.frame_id, sp.t_control);
-
-    {
-        std::lock_guard<std::mutex> lk(kin_mtx_);
-        kinematics_.onSetpoint(sp);
-    }
+    manual_gui_tilt_rad_.store(
+        std::clamp(tilt_rad, -config_.controller.max_tilt_rad, config_.controller.max_tilt_rad));
+    manual_gui_pan_rad_.store(
+        std::clamp(pan_rad, -config_.controller.max_pan_rad, config_.controller.max_pan_rad));
 }
 
 void SystemManager::setTrackerThreshold(const std::uint8_t thr) {

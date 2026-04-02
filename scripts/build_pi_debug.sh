@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${1:-build-pi}"
-BUILD_TYPE="${BUILD_TYPE:-Debug}"
 GENERATOR="${CMAKE_GENERATOR:-Ninja}"
 
-cmake -S "${REPO_ROOT}" -B "${REPO_ROOT}/${BUILD_DIR}" \
+cmake -S . -B "${BUILD_DIR}" \
   -G "${GENERATOR}" \
-  -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+  -DCMAKE_BUILD_TYPE=Debug \
   -DSOLAR_ENABLE_TESTS=ON \
   -DSOLAR_ENABLE_HW_TESTS=ON \
   -DSOLAR_ENABLE_QT=OFF \
   -DSOLAR_TRY_LIBCAMERA=OFF \
   -DSOLAR_TRY_OPENCV=OFF
 
-cmake --build "${REPO_ROOT}/${BUILD_DIR}" --parallel
+cmake --build "${BUILD_DIR}" --parallel --target \
+  test_pca9685 \
+  test_servodriver \
+  test_mpu6050_publisher \
+  test_linux_i2c_hw

@@ -200,10 +200,10 @@ Separate execution contexts are used for:
 
 Inter-stage communication uses bounded queues with a freshest-data policy:
 
-- **frame queue capacity:** 1
-- **command queue capacity:** 1
+- **frame queue capacity:** 2
+- **command queue capacity:** 8
 
-This avoids stale backlog and prioritises current data over historical frames.
+Both queues use `push_latest(...)`. When a queue is full, the oldest item is discarded before the newest item is inserted. This bounds memory use, prevents unbounded backlog, and keeps the control path biased toward current data rather than stale queued work.
 
 ---
 
@@ -338,8 +338,7 @@ Solar-Stewart-Tracker/
 ├── artefacts/
 ├── external/
 │   ├── libcamera2opencv/
-│   ├── libgpiod_event_demo/
-│   └── rpi_ads1115/
+│   └── libgpiod_event_demo/
 ├── scripts/
 ├── src/
 │   ├── actuators/
@@ -465,15 +464,12 @@ The repository includes these submodules under `external/`:
 ```text
 external/libcamera2opencv
 external/libgpiod_event_demo
-external/rpi_ads1115
 ```
 
 Their configured sources are:
 
 - `external/libcamera2opencv` → `https://github.com/berndporr/libcamera2opencv.git`
 - `external/libgpiod_event_demo` → `https://github.com/berndporr/libgpiod_event_demo.git`
-- `external/rpi_ads1115` → `https://github.com/berndporr/rpi_ads1115.git`
-
 ---
 
 ## Building
@@ -766,10 +762,6 @@ The repository also includes or depends on external open-source components. Plea
 #### libgpiod_event_demo
 - GPIO event-driven reference code is sourced from Bernd Porr.
 - Repository: https://github.com/berndporr/libgpiod_event_demo
-
-#### rpi_ads1115
-- The ADS1115 interface is sourced from Bernd Porr.
-- Repository: https://github.com/berndporr/rpi_ads1115
 
 ---
 

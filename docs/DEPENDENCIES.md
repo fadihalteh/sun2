@@ -83,21 +83,16 @@ Controlled by: `-DSOLAR_TRY_LIBCAMERA=ON` (default)
 
 ### Git Submodules
 
-Two dependencies are managed as submodules (declared in `.gitmodules`):
+This repository currently declares **three** git submodules in `.gitmodules`:
 
-| Submodule | Path | Role |
+| Submodule | Path | Role in this repository |
 |---|---|---|
-| libgpiod_event_demo | `external/libgpiod_event_demo` | GPIO edge-event callbacks for ADS1115 and MPU6050 |
-| libcamera2opencv | `external/libcamera2opencv` | libcamera-to-OpenCV frame bridge (libcamera builds only) |
+| libgpiod_event_demo | `external/libgpiod_event_demo` | GPIO edge-event callback support used by the ADS1115 manual-input and MPU6050 data-ready paths |
+| libcamera2opencv | `external/libcamera2opencv` | libcamera-to-OpenCV bridge used only when libcamera and OpenCV support are both enabled |
 
 ```bash
 git submodule update --init --recursive
 ```
-
-### Vendored Dependency
-
-`external/rpi_ads1115` is vendored directly in the repository. No separate initialisation is needed.
-
 ---
 
 ## 5. Linux Kernel Interfaces

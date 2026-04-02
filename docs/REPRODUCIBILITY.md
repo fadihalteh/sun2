@@ -34,10 +34,6 @@ Two dependencies are declared as submodules in `.gitmodules`:
 | libgpiod_event_demo | `external/libgpiod_event_demo` | https://github.com/berndporr/libgpiod_event_demo |
 | libcamera2opencv | `external/libcamera2opencv` | https://github.com/berndporr/libcamera2opencv |
 
-### Vendored Dependency
-
-`external/rpi_ads1115` is vendored directly in the repository (not a submodule) and requires no separate initialisation.
-
 ### System Packages
 
 The CI workflow installs the following system packages on Ubuntu:
@@ -124,7 +120,7 @@ Four workflows are defined under `.github/workflows/`:
 
 | Workflow | Trigger | Runner |
 |---|---|---|
-| `ci.yml` | Push/PR to `main`, `master`, `develop` | `ubuntu-latest` |
+| `ci.yml` | Push/PR to `main` | `ubuntu-latest` |
 | `pi-hardware-tests.yml` | Manual dispatch | Self-hosted `linux/arm64` |
 | `doxygen.yml` | See workflow file | See workflow file |
 | `release.yml` | See workflow file | See workflow file |

@@ -154,8 +154,8 @@ SystemManager o-- ManualImuCoordinator
 SystemManager o-- ADS1115ManualInput
 SystemManager o-- Mpu6050Publisher
 
-SystemManager o-- ThreadSafeQueue~FrameEvent~ : frame_q_ cap=1
-SystemManager o-- ThreadSafeQueue~ActuatorCommand~ : cmd_q_ cap=1
+SystemManager o-- ThreadSafeQueue~FrameEvent~ : frame_q_ cap=2
+SystemManager o-- ThreadSafeQueue~ActuatorCommand~ : cmd_q_ cap=8
 
 ICamera ..> FrameEvent : emits via callback
 SunTracker ..> SunEstimate : emits via callback
@@ -177,13 +177,13 @@ autonumber
 
 participant Cam as Camera backend
 participant SM as SystemManager
-participant FQ as FrameQueue cap=1
+participant FQ as FrameQueue cap=2
 participant CT as Control thread
 participant ST as SunTracker
 participant C as Controller
 participant MIC as ManualImuCoordinator
 participant K as Kinematics3RRS
-participant CQ as CommandQueue cap=1
+participant CQ as CommandQueue cap=8
 participant AT as Actuator thread
 participant AM as ActuatorManager
 participant SD as ServoDriver
@@ -246,7 +246,7 @@ participant IMU as Mpu6050Publisher
 participant SM as SystemManager
 participant MIC as ManualImuCoordinator
 participant K as Kinematics3RRS
-participant CQ as CommandQueue cap=1
+participant CQ as CommandQueue cap=8
 participant AT as Actuator thread
 participant AM as ActuatorManager
 participant SD as ServoDriver
@@ -297,8 +297,8 @@ flowchart LR
 
   subgraph Core["Core Realtime Pipeline"]
     SM["SystemManager"]
-    FQ["FrameQueue cap=1<br/>ThreadSafeQueue&lt;FrameEvent&gt;"]
-    CQ["CommandQueue cap=1<br/>ThreadSafeQueue&lt;ActuatorCommand&gt;"]
+    FQ["FrameQueue cap=2<br/>ThreadSafeQueue&lt;FrameEvent&gt;"]
+    CQ["CommandQueue cap=8<br/>ThreadSafeQueue&lt;ActuatorCommand&gt;"]
     ST["SunTracker"]
     C["Controller"]
     MIC["ManualImuCoordinator"]
@@ -362,12 +362,12 @@ flowchart TB
   end
 
   subgraph T2["Control thread"]
-    FQ["FrameQueue cap=1"]
+    FQ["FrameQueue cap=2"]
     ST["SunTracker"]
     CTRL["Controller"]
     MIC["ManualImuCoordinator"]
     KIN["Kinematics3RRS"]
-    CQ["CommandQueue cap=1"]
+    CQ["CommandQueue cap=8"]
   end
 
   subgraph T3["Actuator thread"]
@@ -436,3 +436,10 @@ This structure enables:
 - clear separation between computation and hardware access
 - safe multi-threaded execution
 - straightforward extension and modification of individual stages
+
+The inter-thread queues are intentionally bounded:
+
+- Frame queue capacity is small (2) to minimise latency and prevent stale frames accumulating.
+- Command queue capacity is larger (8) to absorb short bursts without dropping actuator updates prematurely.
+
+Both queues use a latest-wins policy, ensuring that the system prioritises current data while maintaining bounded memory and predictabl

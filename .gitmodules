@@ -5,6 +5,4 @@
 [submodule "external/libcamera2opencv"]
 	path = external/libcamera2opencv
 	url = https://github.com/berndporr/libcamera2opencv.git
-[submodule "external/rpi_ads1115"]
-	path = external/rpi_ads1115
-	url = https://github.com/berndporr/rpi_ads1115.git
+

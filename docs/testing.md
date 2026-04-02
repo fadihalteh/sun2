@@ -41,15 +41,9 @@ Each test executable is built by linking `test_main.cpp` together with one or mo
 ```bash
 # Run all tests compiled into an executable
 ./build/src/control/tests/test_control
-
-# List all tests in an executable
-./build/src/control/tests/test_control --list
-
-# Run one specific test
-./build/src/control/tests/test_control --run Controller_OutputClamped
 ```
 
-With no arguments an executable runs every test compiled into it. This matters because a test can be compiled into an executable without being separately registered as a CTest entry.
+With no arguments an executable runs every test compiled into it. CTest remains the primary interface for selecting and running tests. Individual test binaries can also be run directly from the build tree, but their command-line interfaces are not assumed to be uniform across all executables.
 
 ---
 
@@ -301,21 +295,24 @@ Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp
 # Run all CTest-registered checks
 ctest --test-dir build --output-on-failure
 
-# Run individual module executables
-./build/src/vision/tests/test_vision --list
-./build/src/control/tests/test_control --run Controller_OutputClamped
-./build/src/common/tests/test_common_core --run ThreadSafeQueue_wait_pop_blocks_then_wakes
-./build/src/actuators/tests/test_actuators --run ActuatorManager_resetHistory_disables_slew_limit_for_next_command
-./build/src/system/tests/test_system --run SystemManager_manual_mode_emits_commands
+# Run one CTest entry by name
+ctest --test-dir build --output-on-failure -R Controller_OutputClamped
+
+# Run individual module executables directly
+./build/src/vision/tests/test_vision
+./build/src/control/tests/test_control
+./build/src/common/tests/test_common_core
+./build/src/actuators/tests/test_actuators
+./build/src/system/tests/test_system
 
 # Enable and build hardware-adjacent tests
 cmake -S . -B build -DSOLAR_ENABLE_HW_TESTS=ON
 cmake --build build -j
 
-# List hardware-adjacent executables
-./build/src/actuators/tests/test_pca9685 --list
-./build/src/actuators/tests/test_servodriver --list
-./build/src/sensors/tests/test_mpu6050_publisher --list
+# Run hardware-adjacent executables directly
+./build/src/actuators/tests/test_pca9685
+./build/src/actuators/tests/test_servodriver
+./build/src/sensors/tests/test_mpu6050_publisher
 ```
 
 ---

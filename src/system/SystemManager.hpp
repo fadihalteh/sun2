@@ -31,10 +31,12 @@
 #include "vision/SunTracker.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace solar {
@@ -259,7 +261,9 @@ private:
     void initialiseCallbacks_();
     void controlLoop_();
     void actuatorLoop_();
-
+    void submitManualSetpointFromControlTick_(
+        std::uint64_t frame_id,
+        std::chrono::steady_clock::time_point t_control);
     void onFrame_(const FrameEvent& fe);
     void onManualPotSample_(const ManualPotSample& sample);
     void onImuSample_(const control::ImuSample& sample);
@@ -293,6 +297,11 @@ private:
 
     std::atomic<bool> running_{false};
     std::atomic<TrackerState> state_{TrackerState::IDLE};
+
+    std::atomic<float> manual_gui_tilt_rad_{0.0F};
+    std::atomic<float> manual_gui_pan_rad_{0.0F};
+    std::mutex manual_pot_mtx_;
+    std::optional<ManualPotSample> latest_manual_pot_sample_;
     std::atomic<std::uint64_t> next_synthetic_frame_id_{1};
 
     float min_confidence_{0.4F};

@@ -28,7 +28,6 @@ The project uses these external repositories as git submodules under `external/`
 ```bash
 git submodule add https://github.com/berndporr/libcamera2opencv.git external/libcamera2opencv
 git submodule add https://github.com/berndporr/libgpiod_event_demo.git external/libgpiod_event_demo
-git submodule add https://github.com/berndporr/rpi_ads1115.git external/rpi_ads1115
 ```
 
 After adding them, fetch their contents with:
@@ -72,7 +71,6 @@ That will place the repositories at these exact paths:
 ```text
 external/libcamera2opencv
 external/libgpiod_event_demo
-external/rpi_ads1115
 ```
 
 ---
