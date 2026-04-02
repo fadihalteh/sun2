@@ -41,27 +41,32 @@ jobs:
             wget \
             xz-utils
 
-      - name: Build and install libgpiod v2
+      - name: Build and install libgpiod v2 with C++ bindings
         run: |
           cd /tmp
           wget https://mirrors.edge.kernel.org/pub/software/libs/libgpiod/libgpiod-${LIBGPIOD_VERSION}.tar.xz
           tar -xf libgpiod-${LIBGPIOD_VERSION}.tar.xz
           cd libgpiod-${LIBGPIOD_VERSION}
-          ./configure --prefix=/usr/local --enable-tools
+          ./configure \
+            --prefix=/usr/local \
+            --enable-tools \
+            --enable-bindings-cxx
           make -j"$(nproc)"
           sudo make install
           sudo ldconfig
 
-      - name: Verify libgpiod version
+      - name: Verify libgpiod install
         run: |
           pkg-config --modversion libgpiod
-          gpioinfo --version || true
+          test -f /usr/local/include/gpiod.hpp
           test -f external/libgpiod_event_demo/gpioevent.h
 
       - name: Configure
         env:
           PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
           CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
         run: |
           cmake -S . -B build \
             -G Ninja \
@@ -72,6 +77,8 @@ jobs:
         env:
           PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
           CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
         run: |
           cmake --build build --parallel --verbose
 
