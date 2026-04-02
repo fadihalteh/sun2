@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            g++ \
+            pkg-config \
+            libgpiod-dev
+
+      - name: Configure and build
+        run: ./scripts/build_core.sh build
+
+      - name: Run tests
+        run: ./scripts/test_core.sh build

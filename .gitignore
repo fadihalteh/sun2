@@ -1,0 +1,60 @@
+# Build directories
+/build/
+/build-*/
+cmake-build-*/
+out/
+bin/
+lib/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+cmake_install.cmake
+compile_commands.json
+Makefile
+Testing/
+
+# Coverage / profiling
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+coverage/
+htmlcov/
+
+# Logs / runtime artefacts
+*.log
+latency_run.log
+*.csv
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Python cache if scripts use python
+__pycache__/
+*.pyc
+
+# Qt generated
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Doxygen output
+docs/html/
+docs/latex/
+
+# Test executables and temporary artefacts
+/tests/*.exe
+/tests/*.out
+
+# Misc
+*~
