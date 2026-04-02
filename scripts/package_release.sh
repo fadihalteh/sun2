@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${1:-build}"
 OUT_ZIP="${2:-solar-stewart-tracker-release.zip}"
+STAGE_DIR="${REPO_ROOT}/release_package"
 
-rm -rf release_package
-mkdir -p release_package/bin
+rm -rf "${STAGE_DIR}"
+mkdir -p "${STAGE_DIR}/bin"
 
-cp "${BUILD_DIR}/solar_tracker" release_package/bin/
+cp "${REPO_ROOT}/${BUILD_DIR}/solar_tracker" "${STAGE_DIR}/bin/"
 
-if [[ -f "${BUILD_DIR}/solar_tracker_qt" ]]; then
-  cp "${BUILD_DIR}/solar_tracker_qt" release_package/bin/
+if [[ -f "${REPO_ROOT}/${BUILD_DIR}/solar_tracker_qt" ]]; then
+  cp "${REPO_ROOT}/${BUILD_DIR}/solar_tracker_qt" "${STAGE_DIR}/bin/"
 fi
 
-cp -r include release_package/
-cp -r src release_package/
-cp CMakeLists.txt release_package/
+for path in CMakeLists.txt README.md LICENSE Doxyfile .gitmodules; do
+  if [[ -f "${REPO_ROOT}/${path}" ]]; then
+    cp "${REPO_ROOT}/${path}" "${STAGE_DIR}/"
+  fi
+done
 
-[[ -f README.md ]] && cp README.md release_package/
-[[ -f LICENSE ]] && cp LICENSE release_package/
-[[ -d docs ]] && cp -r docs release_package/
+for dir in src docs scripts diagrams media artefacts external; do
+  if [[ -d "${REPO_ROOT}/${dir}" ]]; then
+    cp -R "${REPO_ROOT}/${dir}" "${STAGE_DIR}/"
+  fi
+done
 
-zip -r "${OUT_ZIP}" release_package
+rm -f "${REPO_ROOT}/${OUT_ZIP}"
+(
+  cd "${REPO_ROOT}"
+  zip -r "${OUT_ZIP}" "$(basename "${STAGE_DIR}")"
+)

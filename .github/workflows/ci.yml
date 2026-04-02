@@ -19,12 +19,20 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          if ! sudo apt-get install -y \
             cmake \
             ninja-build \
             g++ \
             pkg-config \
-            libgpiod-dev
+            libgpiod-dev \
+            libgpiodcxx-dev; then
+            sudo apt-get install -y \
+              cmake \
+              ninja-build \
+              g++ \
+              pkg-config \
+              libgpiod-dev
+          fi
 
       - name: Configure and build
         run: ./scripts/build_core.sh build
