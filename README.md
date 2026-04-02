@@ -175,7 +175,9 @@ The repository is organised around a staged runtime pipeline.
 
 ### Threading Model
 
-The runtime design uses separate responsibilities with blocking waits:
+The runtime is structured as a **multi-threaded, event-driven system** where **blocking I/O is used to wake up threads**, and callbacks propagate data through the processing pipeline.
+
+Separate execution contexts are used for:
 
 - **camera / backend context**: frame acquisition and callback delivery
 - **control thread**: vision, control, coordination, and kinematics
@@ -184,10 +186,10 @@ The runtime design uses separate responsibilities with blocking waits:
 
 ### Queue Policy
 
-Inter-stage communication uses bounded queues with a **freshest-data** policy:
+Inter-stage communication uses bounded queues with a freshest-data policy:
 
-- frame queue capacity: **1**
-- command queue capacity: **1**
+- **frame queue capacity:** 1
+- **command queue capacity:** 1
 
 This avoids stale backlog and prioritises current data over historical frames.
 
