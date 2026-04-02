@@ -2,7 +2,7 @@
 
 /**
  * @file test_common.hpp
- * @brief Minimal shared test macros for the coursework test suite.
+ * @brief Minimal shared test macros.
  */
 
 #include <cstdlib>

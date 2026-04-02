@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the requirements implemented in the current repository snapshot. All requirements are derived directly from the current source tree, `CMakeLists.txt`, `src/app/AppConfig.cpp`, and the hardware defaults in `src/app/AppConfig.hpp`.
+This document defines the requirements implemented in the  repository . All requirements are derived directly from the  source tree, `CMakeLists.txt`, `src/app/AppConfig.cpp`, and the hardware defaults in `src/app/AppConfig.hpp`.
 
 ---
 

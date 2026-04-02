@@ -8,10 +8,6 @@
  * - hide Linux /dev/i2c access details from sensor publishers
  * - support proper unit testing with fake devices
  * - keep sensor logic separate from raw bus mechanics
- *
- * This is exactly the sort of boundary you want in this coursework:
- * one class handles low-level device access, higher-level classes handle
- * sensor/event logic.
  */
 
 #include <cstddef>

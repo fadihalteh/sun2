@@ -10,8 +10,6 @@
  * - top-level system manager
  * - CLI controller
  * - Linux event loop
- *
- * This keeps `main()` tiny and keeps runtime composition out of the entry point.
  */
 
 #include "app/AppConfig.hpp"
@@ -29,7 +27,7 @@ class CliController;
 class LinuxEventLoop;
 
 /**
- * @brief Headless application object for the final submission runtime.
+ * @brief Headless application object.
  */
 class Application {
 public:

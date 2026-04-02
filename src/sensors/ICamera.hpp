@@ -10,7 +10,6 @@
  * - stop explicitly
  *
  * This keeps the camera as a publisher and the rest of the system as subscribers.
- * That matches the taught callback/event-driven architecture.
  */
 
 #include "common/Types.hpp"

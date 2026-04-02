@@ -32,9 +32,9 @@ This means manual mode is continuous without turning the GUI into the timing sou
 
 ---
 
-## What the Current Snapshot Supports
+## What the repo  Supports
 
-The current repository snapshot supports:
+The  repository  supports:
 
 - automatic tracking
 - manual mode from GUI or potentiometers
@@ -117,4 +117,4 @@ Manual mode also distinguishes command ownership between:
 
 ## Summary
 
-This project is a real-time, event-driven Stewart-platform solar tracker implemented as a staged Linux userspace system. The current snapshot includes a cleaner manual path in which GUI and potentiometer inputs update manual state and the control thread owns continuous manual setpoint submission.
+This project is a real-time, event-driven Stewart-platform solar tracker implemented as a staged Linux userspace system. The repo includes a cleaner manual path in which GUI and potentiometer inputs update manual state and the control thread owns continuous manual setpoint submission.

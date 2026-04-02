@@ -5,8 +5,6 @@
  * @brief Runtime state enumeration for the Solar Stewart Tracker.
  *
  * This file defines the top-level runtime states used by SystemManager.
- * They must stay explicit because the coursework expects a visible, defensible
- * state machine rather than hidden mode flags spread across the code.
  */
 
 namespace solar {

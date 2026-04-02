@@ -138,7 +138,6 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
     system.setManualSetpoint(0.1F, -0.1F);
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
-    // GUI/manual input should no longer directly drive kinematics from the UI call.
     REQUIRE(command_count.load(std::memory_order_relaxed) == 0);
 
     cam_ptr->emitBrightCenteredFrame(1);

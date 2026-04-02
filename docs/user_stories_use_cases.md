@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document captures the user-facing goals supported by the current repository snapshot. All stories and use cases are grounded in the actual runtime behaviour visible in `src/app/CliController.cpp`, `src/qt/MainWindow.cpp`, and `src/system/SystemManager.hpp`.
+This document captures the user-facing goals supported by the  repository . All stories and use cases are grounded in the actual runtime behaviour visible in `src/app/CliController.cpp`, `src/qt/MainWindow.cpp`, and `src/system/SystemManager.hpp`.
 
 ---
 

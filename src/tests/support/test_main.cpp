@@ -1,6 +1,6 @@
 /**
  * @file test_main.cpp
- * @brief Minimal test runner for the coursework suite.
+ * @brief Minimal test runner.
  */
 
 #include "src/tests/support/test_common.hpp"

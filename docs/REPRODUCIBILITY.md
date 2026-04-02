@@ -2,24 +2,24 @@
 
 ## Purpose
 
-This document explains how to reproduce the current repository snapshot from source. It is grounded in the actual contents of the snapshot: `CMakeLists.txt`, `.github/workflows/`, `scripts/`, `.gitmodules`, and the source tree under `src/`.
+This document explains how to reproduce the  repository  from source using the files: `CMakeLists.txt`, `.github/workflows/`, `scripts/`, `.gitmodules`, `external/`, `src/`, and `docs/`.
 
 ---
 
 ## 1. Source of Truth
 
-The reproducible source of truth is:
+The reproducible source of truth in this repository is:
 
 | Path | Role |
 |---|---|
-| `src/` | All application and library source |
+| `src/` | Application and library source code |
 | `CMakeLists.txt` | Top-level build definition |
-| `.gitmodules` | Submodule declarations |
-| `external/` | Vendored and submodule dependencies |
-| `scripts/` | Build, test, and release helper scripts |
-| `.github/workflows/` | CI automation |
-| `artefacts/latency.csv` | Captured runtime latency data |
-
+| `.gitmodules` | External submodule declarations |
+| `external/` | External support code checked out via submodules |
+| `scripts/` | Build, test, documentation, latency, and packaging helper scripts |
+| `.github/workflows/` | CI, documentation, hardware-smoke, and release automation |
+| `artefacts/latency.csv` | Captured software latency measurements |
+| `Doxyfile` | API documentation configuration |
 
 ---
 
@@ -27,43 +27,71 @@ The reproducible source of truth is:
 
 ### Git Submodules
 
-Two dependencies are declared as submodules in `.gitmodules`:
+Two external repositories are declared in `.gitmodules`:
 
 | Submodule | Path | URL |
 |---|---|---|
-| libgpiod_event_demo | `external/libgpiod_event_demo` | https://github.com/berndporr/libgpiod_event_demo |
-| libcamera2opencv | `external/libcamera2opencv` | https://github.com/berndporr/libcamera2opencv |
+| `libgpiod_event_demo` | `external/libgpiod_event_demo` | `https://github.com/berndporr/libgpiod_event_demo` |
+| `libcamera2opencv` | `external/libcamera2opencv` | `https://github.com/berndporr/libcamera2opencv` |
+
+These should be fetched with:
+
+```bash
+git submodule update --init --recursive
+```
 
 ### System Packages
 
-The CI workflow installs the following system packages on Ubuntu:
+The Ubuntu CI workflow installs these packages directly:
 
 ```bash
-sudo apt-get install -y cmake ninja-build g++ pkg-config libgpiod-dev
+sudo apt-get update
+sudo apt-get install -y \
+  autoconf \
+  autoconf-archive \
+  automake \
+  cmake \
+  g++ \
+  libjsoncpp-dev \
+  libtool \
+  make \
+  ninja-build \
+  pkg-config \
+  wget \
+  xz-utils
 ```
 
-Optional backends require additional packages:
+The CI workflow then builds and installs **libgpiod v2.2.2** from source so that the C++ bindings are available.
 
-- **OpenCV** — required for vision processing and the libcamera backend
-- **libcamera** — required for the `LibcameraPublisher` camera backend (Pi only)
-- **Qt5** — required for the `solar_tracker_qt` GUI target
+For local Linux reproduction, the following additional packages may be needed depending on which optional features are enabled:
+
+- `libopencv-dev` for OpenCV-dependent paths
+- `libcamera-dev` for the Raspberry Pi libcamera backend
+- `qtbase5-dev` for the Qt GUI target
+- `graphviz` and `doxygen` for API documentation generation
+- `i2c-tools` for Raspberry Pi hardware-smoke workflows
 
 ---
 
 ## 3. CMake Build Options
 
-All options and their defaults:
+The top-level build defines the following options:
 
 | Option | Default | Effect |
 |---|---|---|
 | `SOLAR_ENABLE_TESTS` | `ON` | Build and register test targets |
-| `SOLAR_ENABLE_HW_TESTS` | `OFF` | Register hardware smoke tests with CTest |
-| `SOLAR_ENABLE_QT` | `ON` | Build Qt GUI target if Qt5 is found |
-| `SOLAR_TRY_LIBCAMERA` | `ON` | Probe for libcamera backend (requires OpenCV) |
+| `SOLAR_ENABLE_HW_TESTS` | `OFF` | Register real hardware smoke tests |
+| `SOLAR_ENABLE_QT` | `ON` | Build the Qt GUI target if Qt5 is available |
+| `SOLAR_TRY_LIBCAMERA` | `ON` | Probe for the libcamera backend |
 | `SOLAR_TRY_OPENCV` | `ON` | Probe for OpenCV support |
-| `SOLAR_ENABLE_COVERAGE` | `OFF` | Enable `--coverage` compile/link flags |
+| `SOLAR_ENABLE_COVERAGE` | `OFF` | Enable coverage compile/link flags where supported |
 
-Optional features degrade gracefully — the build succeeds with reduced functionality if libcamera, OpenCV, or Qt5 are absent.
+Feature probing behaves as follows:
+
+- if OpenCV is not found, OpenCV-dependent functionality is disabled
+- if libcamera is found but OpenCV is not found, the libcamera backend is disabled
+- if Qt5 is not found, the Qt GUI target is skipped
+- if `external/libgpiod_event_demo` is missing, GPIO demo support is disabled
 
 ---
 
@@ -77,75 +105,123 @@ cd Solar-Stewart-Tracker
 # Step 2 — initialise submodules
 git submodule update --init --recursive
 
-# Step 3 — install system dependencies (Ubuntu / Debian)
-sudo apt-get install -y cmake ninja-build g++ pkg-config libgpiod-dev
-# Install libopencv-dev, libcamera-dev, qtbase5-dev as needed for optional backends
+# Step 3 — install build dependencies
+sudo apt-get update
+sudo apt-get install -y \
+  cmake \
+  ninja-build \
+  g++ \
+  pkg-config \
+  libjsoncpp-dev
+
+# Optional packages for optional features
+# sudo apt-get install -y libopencv-dev libcamera-dev qtbase5-dev doxygen graphviz i2c-tools
 
 # Step 4 — configure
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
 # Step 5 — build
-cmake --build build -j
+cmake --build build --parallel
 
 # Step 6 — run software tests
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure --verbose
 
-# Step 7 — run application (headless)
+# Step 7 — run the headless application
 ./build/solar_tracker
 
-# Step 7 (alternative) — run Qt GUI target (if Qt5 was found at configure time)
+# Step 8 — run the Qt GUI if Qt was found at configure time
 ./build/solar_tracker_qt
 ```
 
 ---
 
-## 5. Helper Scripts
+## 5. Helper Scripts in `scripts/`
 
-The `scripts/` directory contains the following:
+The repository  contains these helper scripts:
 
 | Script | Purpose |
 |---|---|
-| `scripts/test_core.sh [BUILD_DIR]` | Run CTest against a build directory |
-| `scripts/test_pi_hw.sh [BUILD_DIR]` | Run hardware-labelled CTest checks on Pi |
-| `scripts/run_latency.sh [BUILD_DIR] [CSV_PATH] [APP]` | Run the application with latency CSV export enabled |
-| `scripts/package_release.sh [BUILD_DIR] [OUT_ZIP]` | Package binaries, source, and docs into a release zip |
+| `scripts/build_core.sh` | Configure and build the main software targets |
+| `scripts/build_docs.sh` | Generate Doxygen documentation |
+| `scripts/build_pi_debug.sh` | Configure a Pi-oriented debug build |
+| `scripts/test_core.sh` | Run the software test suite |
+| `scripts/test_pi_hw.sh` | Run hardware-labelled smoke tests on Raspberry Pi |
+| `scripts/run_latency.sh` | Run the application with latency CSV export enabled |
+| `scripts/package_release.sh` | Package a release zip |
 
-> **Note:** The CI workflow references `scripts/build_core.sh` and `scripts/build_pi_debug.sh`, which are invoked during automated builds but are not present in this snapshot.
 
 ---
 
 ## 6. CI Automation
 
-Four workflows are defined under `.github/workflows/`:
+Four workflows are defined in `.github/workflows/`:
 
 | Workflow | Trigger | Runner |
 |---|---|---|
-| `ci.yml` | Push/PR to `main` | `ubuntu-latest` |
-| `pi-hardware-tests.yml` | Manual dispatch | Self-hosted `linux/arm64` |
-| `doxygen.yml` | See workflow file | See workflow file |
-| `release.yml` | See workflow file | See workflow file |
+| `ci.yml` | push to `main`, pull request to `main`, manual dispatch | `ubuntu-latest` |
+| `doxygen.yml` | push to `main` or `master`, manual dispatch | `ubuntu-latest` |
+| `release.yml` | release created, manual dispatch | `ubuntu-latest` |
+| `pi-hardware-tests.yml` | manual dispatch | self-hosted `linux/arm64` |
 
-The standard CI job (`ci.yml`) checks out with submodules, installs system packages, configures and builds via `scripts/build_core.sh`, then runs `scripts/test_core.sh`.
+### Standard CI (`ci.yml`)
 
-The Pi hardware workflow runs on a self-hosted runner, sets hardware test environment variables, and uploads the test log as an artifact.
+The standard CI workflow performs the following steps:
+
+1. checks out the repository with submodules
+2. installs build dependencies
+3. builds and installs `libgpiod` v2 with C++ bindings from source
+4. configures the project with CMake and Ninja
+5. builds the repository
+6. runs `ctest --test-dir build --output-on-failure --verbose`
+
+### Doxygen workflow (`doxygen.yml`)
+
+The documentation workflow:
+
+1. checks out the repository with submodules
+2. installs `doxygen` and `graphviz`
+3. runs `bash ./scripts/build_docs.sh`
+4. uploads `docs/html` as the Pages artifact
+5. deploys to GitHub Pages
+
+### Release workflow (`release.yml`)
+
+The release workflow:
+
+1. checks out the repository with submodules
+2. installs build dependencies
+3. runs `bash ./scripts/build_core.sh build`
+4. runs `bash ./scripts/package_release.sh build solar-stewart-tracker-release.zip`
+5. uploads the packaged release artifact
+
+### Raspberry Pi hardware-smoke workflow (`pi-hardware-tests.yml`)
+
+The Pi workflow:
+
+1. checks out the repository with submodules
+2. installs Pi-side dependencies including `i2c-tools`
+3. configures a debug build with `SOLAR_ENABLE_HW_TESTS=ON`
+4. builds curated hardware-smoke targets
+5. runs `bash ./scripts/test_pi_hw.sh "${BUILD_DIR}"`
+6. uploads CTest logs and cache files as artifacts
 
 ---
 
 ## 7. Hardware Reproduction
 
-For full hardware reproduction, the target should match the repository assumptions:
+The repository assumes a Raspberry Pi Linux target with the following hardware path available for full reproduction:
 
-- Raspberry Pi (arm64)
-- I2C bus at `/dev/i2c-1`
+- Raspberry Pi running Linux
+- I2C bus exposed as `/dev/i2c-1`
 - PCA9685 PWM controller
-- ADS1115 ADC (manual input potentiometers)
+- ADS1115 ADC for manual input sampling
 - MPU6050 IMU
-- GPIO event support via `libgpiod`
-- libcamera-compatible camera module
+- GPIO event support through `libgpiod`
+- Raspberry Pi camera path compatible with libcamera if the libcamera backend is used
 
 ### Hardware Test Environment Variables
 
-The `scripts/test_pi_hw.sh` script passes these to CTest:
+The hardware-smoke script uses these environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -156,8 +232,16 @@ The `scripts/test_pi_hw.sh` script passes these to CTest:
 ### Enabling Hardware Tests
 
 ```bash
-cmake -S . -B build-pi -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
-cmake --build build-pi -j
+cmake -S . -B build-pi \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DSOLAR_ENABLE_TESTS=ON \
+  -DSOLAR_ENABLE_HW_TESTS=ON \
+  -DSOLAR_ENABLE_QT=OFF \
+  -DSOLAR_TRY_LIBCAMERA=OFF \
+  -DSOLAR_TRY_OPENCV=OFF
+
+cmake --build build-pi --parallel
 ./scripts/test_pi_hw.sh build-pi
 ```
 
@@ -165,13 +249,15 @@ cmake --build build-pi -j
 
 ## 8. Latency Data Reproduction
 
-The captured `artefacts/latency.csv` can be regenerated using:
+The repository includes `artefacts/latency.csv` as captured software latency evidence.
+
+The same output path can be regenerated with:
 
 ```bash
 ./scripts/run_latency.sh build artefacts/latency.csv solar_tracker
 ```
 
-This sets the `SOLAR_LATENCY_CSV` environment variable before launching the application, which causes the runtime `LatencyMonitor` to write per-frame measurements to the specified path on shutdown.
+This script sets the `SOLAR_LATENCY_CSV` environment variable before launching the application. At shutdown, the runtime `LatencyMonitor` writes per-frame measurements to the specified CSV path.
 
 ---
 
@@ -179,33 +265,38 @@ This sets the `SOLAR_LATENCY_CSV` environment variable before launching the appl
 
 If physical hardware is unavailable:
 
-- the `SimulatedPublisher` camera backend allows full pipeline execution without a real camera
-- all software tests in `test_core` remain runnable
-- hardware-adjacent tests can be omitted by leaving `SOLAR_ENABLE_HW_TESTS` at its default (`OFF`)
+- the software test suite still runs
+- hardware-smoke tests remain disabled by default because `SOLAR_ENABLE_HW_TESTS` defaults to `OFF`
+- the application can run through the simulated camera backend path when hardware backends are not available
+
+This allows code-level reproduction of the processing pipeline without requiring the full physical platform.
 
 ---
 
-## 10. Doxygen Documentation
+## 10. API Documentation Reproduction
 
-A `Doxyfile` is present at the repository root. API documentation can be generated locally with:
+A `Doxyfile` is  at the repository root.
+
+Local generation:
 
 ```bash
 doxygen Doxyfile
 ```
 
-Automated documentation generation is handled by `.github/workflows/doxygen.yml`.
+The repository also contains `scripts/build_docs.sh`, which is used by the GitHub documentation workflow.
 
 ---
 
-## 11. What This Document Does Not Claim
+## 11. Summary
 
-- the zip snapshot does not by itself prove GitHub issue or PR history
-- physical actuator lag is not captured in the software latency CSV
-- camera exposure time and mechanical dynamics are outside the software-only measurement scope
-- the CI build scripts (`build_core.sh`, `build_pi_debug.sh`) are referenced by workflows but are not present in this snapshot
+This repository can be reproduced from source because it contains:
 
----
+- the top-level build definition
+- the declared submodules
+- the build, test, latency, documentation, and packaging scripts
+- the CI workflows
+- the source tree
+- the API documentation configuration
+- the captured software latency artifact
 
-## 12. Summary
-
-The repository is reproducible because submodule declarations, system dependencies, CMake options, build and test scripts, CI automation, hardware environment variables, and fallback execution paths are all visible in the snapshot. Each stage from source to running system has a documented, verifiable path.
+A software-only reproduction path is available on a normal Linux system, and a fuller Raspberry Pi hardware-smoke path is defined separately for the target platform.

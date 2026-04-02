@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document lists all dependencies required to build and run the current repository snapshot. All hardware defaults are sourced directly from `src/app/AppConfig.cpp` and `src/app/AppConfig.hpp`.
+This document lists all dependencies required to build and run. All hardware defaults are sourced directly from `src/app/AppConfig.cpp` and `src/app/AppConfig.hpp`.
 
 ---
 
@@ -83,7 +83,7 @@ Controlled by: `-DSOLAR_TRY_LIBCAMERA=ON` (default)
 
 ### Git Submodules
 
-This repository currently declares **three** git submodules in `.gitmodules`:
+This repository  has **three** git submodules in `.gitmodules`:
 
 | Submodule | Path | Role in this repository |
 |---|---|---|

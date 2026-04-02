@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document analyses the realtime-relevant design choices in the repository. All observations are grounded in the current source files visible in the snapshot.
+This document analyses the realtime-relevant design choices in the repository.
 
 ---
 
@@ -59,7 +59,7 @@ The `push_latest()` policy is appropriate for this system: if a consumer thread 
 The control thread blocks on `frame_q_.wait_pop()`. The same blocking wakeups are now reused for both automatic and manual processing:
 
 - in SEARCHING/TRACKING, the thread forwards the frame into `SunTracker`
-- in MANUAL, the thread calls `submitManualSetpointFromControlTick_(...)` and builds the current manual setpoint from stored GUI target state or the latest potentiometer sample
+- in MANUAL, the thread calls `submitManualSetpointFromControlTick_(...)` and builds the  manual setpoint from stored GUI target state or the latest potentiometer sample
 
 This means manual mode is continuous without introducing a separate timer loop, GUI-driven control loop, or polling thread.
 

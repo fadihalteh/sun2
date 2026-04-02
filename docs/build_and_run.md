@@ -1,6 +1,6 @@
 # Build and Run
 
-This file gives the exact repository setup, submodule checkout, build, test, and run commands for the current project snapshot.
+This file gives the exact repository setup, submodule checkout, build, test, and run commands for the  project .
 
 ---
 
@@ -235,8 +235,6 @@ These are for controlled hardware checks and should only be run on the target ma
 ./build-pi/tests/test_pca9685
 ./build-pi/tests/test_servodriver
 ```
-
-If a dedicated manual servo smoke test target is present in your checkout, run it only with safe mechanical clearance and conservative limits.
 
 ---
 

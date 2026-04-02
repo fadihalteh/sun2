@@ -276,20 +276,10 @@ Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp
 - IMU tilt estimation and IMU feedback mapping
 - selected startup and mapping behaviour of PCA9685, ServoDriver, and MPU6050 publisher (when hardware-adjacent tests are enabled)
 
----
-
-## 8. What the Current Tests Do Not Prove
-
-- full physical motion correctness of the assembled mechanism
-- long-duration reliability on real hardware
-- complete actuator mechanical response
-- full end-to-end camera-to-motion physical-loop validation
-- hard realtime guarantees under all scheduling conditions
-- exhaustive handling of all hardware fault scenarios
 
 ---
 
-## 9. Practical Commands
+## 8. Practical Commands
 
 ```bash
 # Run all CTest-registered checks
