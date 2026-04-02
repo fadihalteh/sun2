@@ -146,7 +146,7 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
     const int first_count = command_count.load(std::memory_order_relaxed);
     REQUIRE(first_count > 0);
 
-    // Manual GUI mode should remain continuous on later control ticks without
+    // Manual GUI mode remain continuous on later control ticks without
     // needing another setManualSetpoint() call.
     cam_ptr->emitBrightCenteredFrame(2);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));

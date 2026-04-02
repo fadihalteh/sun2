@@ -2,9 +2,9 @@
 
 ## Project Identity
 
-This repository is an ENG5220 real-time embedded programming project implementing a Stewart-platform solar tracker on Raspberry Pi/Linux userspace.
+This repository implements a real-time Stewart-platform solar tracker on Raspberry Pi/Linux userspace.
 
-The system observes a camera stream, locates the brightest target region, converts that image-space error into platform tilt and pan demands, maps those demands into actuator commands, applies final output conditioning, and drives the platform through the servo hardware path.
+The system processes a camera stream, detects the dominant light source, converts image-space error into platform tilt and pan setpoints, maps those setpoints to actuator commands, applies output conditioning, and drives the platform through a servo-based actuation system.
 
 ---
 
@@ -18,7 +18,7 @@ Camera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS
 
 This staged flow is orchestrated in `src/system/SystemManager.cpp`.
 
-Manual mode uses the same downstream actuation path, but the ingress behaviour is now cleaner:
+Manual mode uses the same downstream actuation path.
 
 ```text
 GUI valueChanged / ADS1115 callback
@@ -113,8 +113,3 @@ Manual mode also distinguishes command ownership between:
 - `ManualCommandSource::Pot`
 
 
----
-
-## Summary
-
-This project is a real-time, event-driven Stewart-platform solar tracker implemented as a staged Linux userspace system. The repo includes a cleaner manual path in which GUI and potentiometer inputs update manual state and the control thread owns continuous manual setpoint submission.

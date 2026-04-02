@@ -153,7 +153,7 @@ public:
     /**
      * @brief Compute summary statistics over completed records.
      *
-     * @return Summary snapshot.
+     * @return Summary.
      */
     [[nodiscard]] Summary summary() const;
 

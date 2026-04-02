@@ -1,6 +1,6 @@
 # Testing and Reliability Strategy
 
-This document describes the current testing setup implemented in the repository source. Tests are co-located with their modules under `src/*/tests/` and wired into CTest via each module's own `CMakeLists.txt`.
+This document describes the testing setup implemented in the repository source. Tests are co-located with their modules under `src/*/tests/` and wired into CTest via each module's own `CMakeLists.txt`.
 
 The test approach is intentionally lightweight:
 
@@ -14,14 +14,12 @@ The test approach is intentionally lightweight:
 
 ## 1. Testing Approach
 
-The current test strategy is based on the following principles:
+The test strategy is based on the following principles:
 
 - keep core logic testable without physical hardware
 - isolate vision, control, queueing, kinematics, and system state as deterministic software tests
 - make hardware-adjacent tests opt-in via `-DSOLAR_ENABLE_HW_TESTS=ON`
 - expose individual named cases through CTest
-- avoid claiming that software-only tests prove full physical-system correctness
-
 ---
 
 ## 2. Test Framework
@@ -263,7 +261,7 @@ Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp
 
 ---
 
-## 7. What the Current Tests Demonstrate
+## 7. What the Tests Demonstrate
 
 - bright-target detection and centroid logic
 - controller gating, deadband, and output clamping
@@ -305,12 +303,4 @@ cmake --build build -j
 ./build/src/sensors/tests/test_mpu6050_publisher
 ```
 
----
 
-## 10. Maintenance Note
-
-This document matches each module's `CMakeLists.txt` under `src/*/tests/`. If the test inventory changes, this document must be updated at the same time. The following distinctions must remain explicit:
-
-- which executable a test is compiled into
-- which tests are individually registered as CTest entries
-- which modules require `SOLAR_ENABLE_HW_TESTS=ON` to build their tests

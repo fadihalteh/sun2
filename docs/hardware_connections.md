@@ -1,8 +1,8 @@
-# 🔌 EXACT CONNECTIONS (THIS IS THE SOURCE OF TRUTH)
+# EXACT CONNECTIONS 
 
 ---
 
-## 🔹 Raspberry Pi Pins (PHYSICAL)
+##  Raspberry Pi Pins (PHYSICAL)
 
 | Physical Pin | Signal | Connection |
 |-------------|--------|-----------|
@@ -15,7 +15,7 @@
 
 ---
 
-## 🔹 PCA9685 Connections
+##  PCA9685 Connections
 
 | Pin | Connects To |
 |-----|------------|
@@ -25,7 +25,7 @@
 | SCL | Raspberry Pi Pin 5 (GPIO3 / SCL1) |
 | V+  | External 5–6V power supply (+) |
 
-### 🔸 Servo Outputs
+### Servo Outputs
 
 | Channel | Connects To |
 |--------|-------------|
@@ -35,7 +35,7 @@
 
 ---
 
-## 🔹 ADS1115 Connections
+## ADS1115 Connections
 
 | Pin | Connects To |
 |-----|------------|
@@ -45,7 +45,7 @@
 | SCL | Raspberry Pi Pin 5 (GPIO3 / SCL1) |
 | ALERT/RDY | Raspberry Pi Pin 11 (GPIO17) |
 
-### 🔸 Analog Inputs
+###  Analog Inputs
 
 | Channel | Source |
 |--------|--------|
@@ -54,7 +54,7 @@
 
 ---
 
-## 🔹 MPU6050 Connections
+##  MPU6050 Connections
 
 | Pin | Connects To |
 |-----|------------|
@@ -66,7 +66,7 @@
 
 ---
 
-## 🔹 Servo Wiring
+##  Servo Wiring
 
 Each servo has 3 wires:
 
@@ -78,7 +78,7 @@ Each servo has 3 wires:
 
 ---
 
-## 🔹 Potentiometers (2 Units)
+##  Potentiometers (2 Units)
 
 Each potentiometer has 3 pins:
 
@@ -90,7 +90,7 @@ Each potentiometer has 3 pins:
 
 ---
 
-## 🔹 External Power Supply
+##  External Power Supply
 
 | Pin | Connects To |
 |-----|------------|
@@ -99,7 +99,7 @@ Each potentiometer has 3 pins:
 
 ---
 
-## 🔹 CSI Camera
+##  CSI Camera
 
 | Connection | Description |
 |-----------|------------|
@@ -108,7 +108,7 @@ Each potentiometer has 3 pins:
 
 ---
 
-# ⚠️ CRITICAL ELECTRICAL RULES
+#  CRITICAL ELECTRICAL RULES
 
 - All grounds MUST be connected together (common ground)
 - I2C bus is shared:
@@ -123,7 +123,7 @@ Each potentiometer has 3 pins:
 
 ---
 
-# 🧠 SYSTEM SUMMARY
+#  SYSTEM SUMMARY
 
 - Raspberry Pi controls system logic
 - I2C bus connects sensors and driver:

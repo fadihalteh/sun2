@@ -1,608 +1,552 @@
 # SOLID Justification
 
-This document explains how the class structure in the current implementation supports the project’s realtime and software-engineering goals. The argument here is not that every class exists because of a textbook rule. The argument is that the specific class boundaries in this repository reduce timing risk, reduce coupling to hardware, improve testability, and make the event-driven architecture defendable against the ENG5220 criteria.
+This document describes the class structure of the solar-tracking system and explains how the main class boundaries support realtime behaviour, hardware isolation, testability, and maintenance.
 
-The core runtime pipeline implemented in the current codebase is:
+The core runtime pipeline is:
 
 **ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-`SystemManager` is the runtime orchestrator around that pipeline. `SystemFactory` is the composition root. `LinuxEventLoop` and the Qt GUI are application-side control surfaces, not the realtime processing core.
+`SystemManager` coordinates that pipeline at runtime. `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
 
-The most important design decision in this repository is that the code is not structured as one giant “tracker” class. Instead, each stage has a narrow boundary and communicates forward through callbacks or explicit method calls with typed data. That is a better fit for this project than a monolithic design because this system combines:
-
-- Linux userspace blocking/event-driven I/O
-- camera acquisition
-- vision estimation
-- control
-- optional manual input and IMU correction policy
-- 3-RRS mechanism mapping
-- actuator safety conditioning
-- final servo hardware output
-- CLI and Qt application control
-
-If those concerns were merged into one class, the result would be harder to test, harder to explain, harder to maintain, and more dangerous in a realtime project because timing-sensitive code would become mixed with configuration, GUI, and hardware details.
+The system is intentionally structured as a staged pipeline rather than a single tracker class. That separation keeps acquisition, estimation, control, policy coordination, mechanism mapping, safety conditioning, hardware output, and application control distinct. For this system, that improves traceability, simplifies testing, and reduces the risk of mixing timing-sensitive logic with platform-specific code.
 
 ---
 
-## Why SOLID is useful in this specific project
+## Design context
 
-SOLID matters here for four concrete reasons.
+The class structure is shaped by four practical requirements.
 
-First, the project must keep hardware-facing code isolated from pure logic. Camera backends, I2C, GPIO-backed manual input, IMU publishing, and servo output are all volatile and platform-specific. Vision, control, kinematics, and mapping logic should not depend on those details.
+First, hardware-facing code must remain isolated from pure logic. Camera backends, I2C access, GPIO-backed manual input, IMU publishing, and PWM output are platform-specific concerns. Vision, control, mapping, and kinematics should not depend directly on those details.
 
-Second, the project must preserve an event-driven structure. The taught architecture is sensor event → callback-driven processing → setter/output. Clear class boundaries make that architecture explicit. Without those boundaries, it becomes easy to slip into polling, global-state sharing, or a giant loop that mixes acquisition, processing, and output.
+Second, the runtime must preserve an event-driven flow. Sensor and backend events enter the pipeline, are transformed by dedicated stages, and progress toward output through typed interfaces. Clear stage boundaries make that flow explicit.
 
-Third, the project must be testable without full hardware. A class boundary is not just a style choice here; it is what allows fake or simulated inputs, unit tests for pure logic, and hardware-specific tests to coexist.
+Third, the system must support development and testing without requiring the full physical platform at all times. Narrow interfaces and focused classes allow software-only tests, simulated inputs, and hardware-smoke checks to coexist.
 
-Fourth, the project must be explainable at assessment level. The marking criteria do not reward a working blob of code. They reward justified class structure, clear encapsulation, safe interfaces, reliable realtime behaviour, and maintainability. The class structure in this repository is strongest where it separates policy, computation, orchestration, and hardware.
+Fourth, the runtime must remain maintainable as policies, backends, and hardware details change. Each class therefore has a narrow responsibility and an explicit role in the overall data path.
 
 ---
 
 ## `ICamera`
 
-### Why this class boundary is correct
+### Purpose
 
-`ICamera` is the abstraction for “a source of frames”. That boundary is correct because the rest of the system does not care whether frames come from a Raspberry Pi camera stack or a simulated publisher. The rest of the system only needs a typed frame source and a callback registration mechanism.
+`ICamera` defines the contract for frame-producing backends.
 
-If the higher-level runtime depended directly on libcamera code, the vision pipeline would become Linux-camera-specific, tests would become harder to run without hardware, and `SystemManager` would take on platform-specific responsibilities that do not belong there.
+The rest of the runtime does not need to know whether frames come from a Raspberry Pi camera backend or a software simulator. It only needs a typed frame source with a callback registration mechanism.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-`ICamera` has exactly one architectural responsibility: define the contract for frame delivery. It does not acquire frames itself, does not process them, and does not know anything about tracking or control.
-
-That is better than putting camera implementation details directly into orchestration code because it prevents the runtime manager from becoming a mixed abstraction that both controls application lifecycle and performs sensor I/O.
+`ICamera` defines one architectural contract: frame delivery. It does not acquire frames itself, perform tracking, or manage control behaviour.
 
 **Interface Segregation Principle**
 
-The interface is intentionally narrow. A camera source should expose camera operations only. It should not force downstream code to know about device configuration internals, GUI display logic, or tracking functions.
-
-That is better than a broad “sensor interface” with unrelated responsibilities because it keeps camera clients dependent only on what they actually use.
+The interface remains narrow. Camera consumers depend only on frame-source operations and do not need backend-specific configuration or display logic.
 
 **Dependency Inversion Principle**
 
-Higher-level code depends on `ICamera`, not on `LibcameraPublisher` or `SimulatedPublisher`. That is the right direction of dependency for this project. The runtime policy layer should not be forced to rework itself whenever the acquisition backend changes.
+Higher-level runtime code depends on `ICamera`, not on concrete camera implementations. That keeps backend choice separate from pipeline logic.
 
-### Why it is better than the alternative
+### Boundary value
 
-A concrete-only design would couple the runtime directly to one acquisition backend. That would make the whole pipeline harder to test and would mix hardware choice with control architecture. For this project, that would be a weaker design both technically and academically.
+This boundary prevents camera backend details from leaking into orchestration, vision, or control code. It also allows different frame sources to use the same downstream processing path.
 
 ---
 
 ## `LibcameraPublisher`
 
-### Why this class exists
+### Purpose
 
-`LibcameraPublisher` isolates the real Raspberry Pi camera backend behind the `ICamera` abstraction. Its job is not to participate in control logic. Its job is to acquire real frames and publish them into the pipeline.
+`LibcameraPublisher` provides the Raspberry Pi camera backend behind the `ICamera` contract.
 
-That separation is important because libcamera is a complex, platform-specific dependency. The rest of the project should not be contaminated by its API or lifecycle details.
+Its job is to acquire frames from the real camera path and publish them into the runtime pipeline. It does not participate in tracking, control, or actuation policy.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is frame acquisition from the real camera path. It should not detect the sun, compute setpoints, manage servo output, or decide system state.
-
-That is better than embedding libcamera handling into `SystemManager` because the runtime orchestrator would otherwise become both a hardware wrapper and a policy manager.
+Its responsibility is camera acquisition for the libcamera path.
 
 **Liskov Substitution Principle**
 
-It is valid anywhere an `ICamera` is expected. That matters in this project because the rest of the pipeline can remain unchanged whether the input source is real or simulated.
+It can be used anywhere an `ICamera` is required.
 
 **Dependency Inversion Principle**
 
-The rest of the system depends on the abstract frame source contract, while `LibcameraPublisher` absorbs the low-level dependency.
+The rest of the system remains dependent on the camera abstraction while this class absorbs the backend-specific API.
 
-### Why it is better than the alternative
+### Boundary value
 
-If real camera code were spread across several classes, the hardware dependency would leak upward and sideways. That would make failure handling, testing, and portability worse. Keeping it in one backend class is the cleaner architecture.
+This class isolates libcamera lifecycle and integration details from the rest of the runtime. That keeps the pipeline independent of camera-stack implementation details.
 
 ---
 
 ## `SimulatedPublisher`
 
-### Why this class exists
+### Purpose
 
-`SimulatedPublisher` provides a software-only frame source that still fits the same pipeline contract as the real camera. That is a strong design choice for this repository because it allows development and testing without requiring physical camera hardware.
+`SimulatedPublisher` provides a software-only frame source through the same `ICamera` contract.
 
-This is not redundant with `LibcameraPublisher`. It serves a different operational role while preserving the same interface boundary.
+It supports development, testing, and runtime execution when the real camera path is unavailable or unnecessary.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is to generate synthetic frames and publish them as camera-like events. It does not control actuators, perform vision, or manage application state.
+Its responsibility is synthetic frame generation and publication.
 
 **Liskov Substitution Principle**
 
-It can replace `LibcameraPublisher` wherever `ICamera` is consumed. That substitution matters because it lets the exact same downstream pipeline run against simulated input.
+It can replace `LibcameraPublisher` anywhere `ICamera` is consumed.
 
 **Open/Closed Principle**
 
-The system is open to adding further camera implementations without rewriting the consumer pipeline. The abstraction boundary is what makes this possible.
+Additional camera implementations can be introduced without redesigning the consumers of `ICamera`.
 
-### Why it is better than the alternative
+### Boundary value
 
-The weaker alternative is to bury simulation behind conditionals inside `SystemManager` or `main()`. That would scatter backend selection logic across the runtime and make simulation a second-class path rather than a real implementation. This class-based design is stronger.
+Simulation remains a first-class backend rather than an internal conditional path buried in runtime orchestration.
 
 ---
 
 ## `SunTracker`
 
-### Why this class exists
+### Purpose
 
-`SunTracker` is the vision stage. Its responsibility is to convert a `FrameEvent` into a `SunEstimate`. That boundary is technically correct because vision estimation is its own problem: validate frame shape, interpret pixel intensities, segment the target, and emit an estimate.
+`SunTracker` is the vision stage. It converts a `FrameEvent` into a `SunEstimate`.
 
-It should not know anything about actuator limits, servo channels, manual control mode, or platform kinematics.
+It validates frame layout assumptions, interprets image data, detects the target, and emits a typed estimate for downstream control.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-`SunTracker` has one engineering reason to change: the image-processing method for target detection. If tracking logic changes, this class should change. If servo calibration changes, this class should not change. That is exactly the kind of responsibility isolation the project needs.
-
-This is better than folding vision into `SystemManager` because then the runtime orchestrator would also have to change whenever thresholding, centroid logic, or confidence rules change.
+Its reason to change is the target-detection method.
 
 **Open/Closed Principle**
 
-The detector implementation can evolve internally without forcing redesign of control or actuation classes, as long as the `SunEstimate` contract remains stable.
+Tracking internals can evolve while preserving the `SunEstimate` contract used downstream.
 
-That is better than exposing internal pixel-processing assumptions to the rest of the system.
+**Encapsulation**
 
-**Encapsulation and safe data management**
+Frame validation and image-processing details remain contained within the tracker.
 
-The tracker validates the frame contract before reading it. That matters in this project because frame layout errors are a genuine fault risk. The class therefore encapsulates not just the algorithm but also the safe handling of frame storage assumptions.
+### Boundary value
 
-### Why it is better than the alternative
-
-A “tracker” function buried inside a runtime loop would mix vision logic with thread, state, and actuator concerns. That would make faults harder to localise and would weaken both the design argument and the test story.
+This class separates image interpretation from runtime orchestration, control, and hardware output. That keeps vision faults and control faults easier to localise.
 
 ---
 
 ## `Controller`
 
-### Why this class exists
+### Purpose
 
-`Controller` converts a tracking estimate into a platform setpoint. That is a separate engineering stage from vision and from mechanism mapping. It is the correct place for confidence gating, deadband behaviour, and command generation in platform coordinates.
+`Controller` converts a tracking estimate into a platform setpoint.
 
-The controller should not compute servo angles and should not talk to hardware. Those are different responsibilities with different reasons to change.
+It handles confidence gating, deadband behaviour, and command generation in platform coordinates.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-The controller owns the control-law decision from estimate space to platform-command space. That makes tuning and behavioural reasoning possible without dragging hardware and mechanism geometry into the same class.
-
-This is better than combining controller and kinematics because a bad final motion would then be harder to diagnose: was the issue the control law or the mechanism transform?
+Its reason to change is the control-law policy from estimate space to platform-command space.
 
 **Open/Closed Principle**
 
-Controller behaviour can be refined by changing gains, deadband policy, saturation rules, or confidence handling without rewriting downstream classes.
+Gains, deadband policy, saturation, and confidence handling can change without restructuring downstream stages.
 
 **Dependency Inversion Principle**
 
-The controller depends on typed upstream estimate data, not on camera backends or servo implementations. That direction of dependency is correct because control logic is a policy layer, not a hardware layer.
+The controller depends on typed estimate data rather than on camera backends or hardware output details.
 
-### Why it is better than the alternative
+### Boundary value
 
-A weaker design would send image error directly to servo commands. That would collapse control and mechanism mapping into one opaque stage and make both tuning and academic justification much harder.
+This stage separates control policy from both vision and mechanism mapping. That preserves a clear distinction between “what the platform should do” and “how the mechanism achieves it”.
 
 ---
 
 ## `ManualImuCoordinator`
 
-### Why this class exists
+### Purpose
 
-`ManualImuCoordinator` is one of the most important design improvements in the current repository because it prevents `SystemManager` from absorbing every piece of manual-input and IMU-related policy.
+`ManualImuCoordinator` owns command-policy coordination for manual control and IMU-based correction.
 
-Its responsibilities are explicitly documented in the implementation:
+Its responsibilities include:
 
 - mapping manual potentiometer samples to platform setpoints
-- selecting whether potentiometer or GUI owns manual commands
-- storing latest IMU sample and tilt estimate
+- selecting whether potentiometer or GUI input owns manual commands
+- storing the latest IMU sample and tilt estimate
 - applying optional IMU correction to controller setpoints
 
-That combination is coherent because all of those concerns are policy decisions about command formation, not hardware I/O and not top-level runtime orchestration.
-
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is not “manual plus IMU because they happened to fit somewhere”. Its responsibility is command policy coordination around manual control ownership and tilt-feedback correction. That is one policy boundary.
-
-This is better than putting all of this into `SystemManager` because `SystemManager` already has to own lifecycle, worker startup/shutdown, queue consumption, and state transitions. Without this coordinator class, `SystemManager` would become a god class.
+Its responsibility is command-policy coordination for manual ownership and tilt feedback.
 
 **Open/Closed Principle**
 
-Different IMU feedback policies or command ownership policies can be introduced by modifying this policy layer without reworking the runtime orchestration layer.
+Manual-input ownership rules and IMU-correction rules can evolve within this policy layer without restructuring runtime orchestration.
 
 **Dependency Inversion Principle**
 
-The coordinator depends on pure mapping helpers (`ManualInputMapper`, `ImuTiltEstimator`, `ImuFeedbackMapper`) rather than directly embedding those algorithms in runtime code. That is the right dependency direction: orchestration uses policy objects, not the other way around.
+It depends on dedicated helpers such as `ManualInputMapper`, `ImuTiltEstimator`, and `ImuFeedbackMapper` rather than embedding those algorithms inline.
 
-### Why it is better than the alternative
+### Boundary value
 
-The obvious bad alternative is a swollen `SystemManager` with interleaved branches for manual mode, GUI ownership, pot ownership, IMU correction, and state-dependent command generation. That alternative would be harder to test, harder to reason about, and harder to defend as SOLID.
-
-This class is better because it removes policy branching from the orchestration class and keeps it in a focused coordination module.
+This class keeps manual-command policy and IMU-correction policy out of `SystemManager`, reducing orchestration complexity and preserving focused runtime responsibilities.
 
 ---
 
 ## `ManualInputMapper`
 
-### Why this class exists
+### Purpose
 
-`ManualInputMapper` exists to convert raw manual input values into platform commands. That mapping is pure logic. It should not live inside the ADS1115 input backend and should not live inside `SystemManager`.
+`ManualInputMapper` converts manual input values into platform commands.
 
-### SOLID justification
+This is pure mapping logic and does not belong in the ADC/input backend or in runtime orchestration.
+
+### SOLID role
 
 **Single Responsibility Principle**
 
-It changes only if the mapping from manual inputs to commanded motion changes.
-
-That is better than placing the mapping inside the hardware input class because hardware acquisition and command semantics are different reasons to change.
+Its reason to change is the mapping from manual input values to commanded motion.
 
 **Dependency Inversion Principle**
 
-Higher-level policy code uses a pure mapper rather than re-implementing scaling logic inline.
+Higher-level policy code depends on a dedicated mapper rather than repeating scaling logic inline.
 
-### Why it is better than the alternative
+### Boundary value
 
-If raw ADC semantics and motion semantics were mixed together inside one device wrapper, the class would become half hardware driver, half control policy. That would be a worse architectural boundary.
+This class keeps command semantics separate from hardware acquisition details.
 
 ---
 
 ## `ImuTiltEstimator`
 
-### Why this class exists
+### Purpose
 
-`ImuTiltEstimator` converts reduced IMU acceleration data into a tilt estimate. It is intentionally stateless and mathematical. That is exactly the right design because tilt estimation is an algorithm, not a hardware or lifecycle concern.
+`ImuTiltEstimator` converts reduced IMU acceleration data into a tilt estimate.
 
-### SOLID justification
+It is a pure estimation component.
+
+### SOLID role
 
 **Single Responsibility Principle**
 
-It changes only if the tilt estimation method changes.
+Its reason to change is the tilt-estimation method.
 
 **Dependency Inversion Principle**
 
-Policy code depends on a pure estimator instead of directly embedding trigonometric logic inside runtime code.
+Policy code depends on a dedicated estimator rather than embedding estimation logic into runtime control code.
 
-### Why it is better than the alternative
+### Boundary value
 
-Embedding tilt estimation into an IMU publisher or into `SystemManager` would mix sensor transport with interpretation. That would make the code less testable and blur the boundary between acquisition and estimation.
+This class separates sensor transport from signal interpretation.
 
 ---
 
 ## `ImuFeedbackMapper`
 
-### Why this class exists
+### Purpose
 
-`ImuFeedbackMapper` turns a measured tilt into a bounded correction term. This is pure control-support logic. It is not a sensor class and not a runtime class.
+`ImuFeedbackMapper` converts measured tilt into a bounded correction term.
 
-### SOLID justification
+It is a control-support policy component.
+
+### SOLID role
 
 **Single Responsibility Principle**
 
-It changes only when the correction policy changes: gain, deadband, or correction bounds.
+Its reason to change is the correction policy: gain, deadband, and output limits.
 
 **Open/Closed Principle**
 
-Correction strategy can be refined without changing orchestration, backend startup, or servo output code.
+Correction behaviour can be refined without redesigning orchestration, backend startup, or hardware output code.
 
-### Why it is better than the alternative
+### Boundary value
 
-If correction logic were embedded directly inside `Controller` or `SystemManager`, then control policy changes would drag unrelated code into the same modification set. This class keeps that correction behaviour explicit and testable.
+This class makes tilt-correction policy explicit and testable.
 
 ---
 
 ## `Kinematics3RRS`
 
-### Why this class exists
+### Purpose
 
-`Kinematics3RRS` transforms a platform setpoint into actuator commands for the 3-RRS mechanism. This must be separate from the controller because it is a mechanism-specific mapping, not a control-law decision.
+`Kinematics3RRS` transforms a platform setpoint into actuator commands for the 3-RRS mechanism.
 
-This boundary is essential in a Stewart-platform-like project. Vision and control decide what the platform should do. Kinematics decides how this particular mechanism must move to achieve that.
+It is mechanism-specific mapping, separate from both control-law policy and hardware output.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is mechanism mapping only. Geometry, calibration, and inverse-kinematics behaviour belong here. They do not belong in the controller and do not belong in the servo driver.
-
-This is better than a merged controller/kinematics class because control tuning and mechanical geometry are fundamentally different causes of change.
+Its responsibility is mechanism mapping, including geometry, calibration, and inverse-kinematics behaviour.
 
 **Open/Closed Principle**
 
-Mechanism details can be recalibrated or reformulated here while preserving the upstream platform-command contract.
+Mechanism details can change here while preserving the upstream platform-setpoint contract.
 
 **Encapsulation**
 
-The geometry and calibration parameters are contained in a dedicated configuration structure. That is better than scattering these constants through controller or hardware code.
+Geometry and calibration parameters remain contained in a dedicated configuration structure.
 
-### Why it is better than the alternative
+### Boundary value
 
-The weaker alternative is direct controller-to-servo mapping. That would throw away the intermediate physical meaning of the platform setpoint and make the mechanism model implicit and opaque. This class is the stronger and more defensible architecture.
+This class preserves the physical meaning of the intermediate platform setpoint and keeps the mechanism model explicit rather than implicit.
 
 ---
 
 ## `ActuatorManager`
 
-### Why this class exists
+### Purpose
 
-`ActuatorManager` is the actuator safety-conditioning stage. It clamps outputs and applies slew-rate limiting before the final servo driver sees commands.
+`ActuatorManager` is the actuator safety-conditioning stage.
 
-This is a very strong class boundary in the current repository because it makes safety shaping explicit rather than burying it inside the final hardware driver.
+It clamps actuator outputs and applies slew-rate limiting before commands reach the servo driver.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is safety conditioning of actuator commands. It should not own hardware and should not own worker threads. That separation is explicitly stated in the class design and is the correct design for this project.
-
-This is better than putting clamping and slew limiting into `ServoDriver` because the servo driver should be the final output stage, not the place where high-level motion safety policy is decided.
+Its responsibility is actuator-command conditioning.
 
 **Open/Closed Principle**
 
-Safety policy can be changed here without redesigning PCA9685 access or degree-to-pulse mapping.
+Safety policy can change without redesigning low-level hardware access.
 
 **Dependency Inversion Principle**
 
-Downstream hardware receives already-conditioned commands. Hardware code therefore depends on a cleaner and safer input contract.
+Downstream hardware code receives already-conditioned commands rather than raw control outputs.
 
-### Why it is better than the alternative
+### Boundary value
 
-If safety shaping were hidden inside the hardware driver, then hardware output and motion-policy reasoning would be mixed. That would make testing harder and would hide a critical safety stage from the architecture. This class is better because it keeps safety conditioning as a first-class pipeline stage.
+This class keeps safety policy separate from both mechanism mapping and final hardware output.
 
 ---
 
 ## `ServoDriver`
 
-### Why this class exists
+### Purpose
 
-`ServoDriver` is the final output stage. Its documented responsibilities are:
+`ServoDriver` is the final servo-output stage.
 
-- final degree-to-pulse mapping
-- PCA9685 hardware access policy
-- applying already-conditioned commands
-- startup/stop parking
+Its responsibilities are:
 
-Its documented non-responsibilities are equally important:
+- degree-to-pulse conversion
+- PCA9685 access policy
+- application of already-conditioned commands
+- startup and stop parking behaviour
 
-- no control logic
-- no kinematics
-- no realtime scheduling
-- no queueing
+It does not own control policy, kinematics, or queueing.
 
-That is a very strong architectural boundary. It is exactly the kind of explicit responsibility statement that helps defend the class design.
-
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is final servo output handling, not command generation. It is the correct place for channel calibration, inversion, pulse conversion, and startup policy. It is not the correct place for deciding whether a command is safe or whether the sun has been detected.
-
-This is better than a combined actuator controller because it keeps electrical/hardware mapping separate from motion semantics.
+Its responsibility is final servo output handling.
 
 **Open/Closed Principle**
 
-Different startup policies, parking policies, or calibration values can be supported without rewriting upstream control or kinematics logic.
+Calibration, startup policy, and parking behaviour can change without restructuring upstream control or kinematics code.
 
 **Dependency Inversion Principle**
 
-The rest of the pipeline can reason in actuator-command units without depending on PCA9685 register access.
+The rest of the pipeline operates in actuator-command units without depending directly on PWM register access.
 
-### Why it is better than the alternative
+### Boundary value
 
-A weaker alternative would be one giant “servo subsystem” class that also did safety shaping, command generation, and hardware access. That would collapse several distinct reasons to change into one module. The current separation is better.
+This class keeps electrical and channel-mapping behaviour separate from motion semantics and safety policy.
 
 ---
 
 ## `PCA9685`
 
-### Why this class exists
+### Purpose
 
-`PCA9685` exists to encapsulate the low-level PWM chip behaviour. That is appropriate because register-level I2C interaction is not the responsibility of `ServoDriver` and certainly not the responsibility of control or orchestration code.
+`PCA9685` encapsulates the low-level PWM chip behaviour.
 
-### SOLID justification
+Register-level I2C interaction is isolated here rather than spread through higher-level output code.
+
+### SOLID role
 
 **Single Responsibility Principle**
 
-It changes when the PWM chip access code changes, not when control policy changes.
+Its responsibility is PCA9685 chip access.
 
 **Dependency Inversion Principle**
 
-Higher-level output code uses a device abstraction layer rather than embedding chip access everywhere.
+Higher-level output stages use a dedicated chip wrapper rather than embedding low-level register access directly.
 
-### Why it is better than the alternative
+### Boundary value
 
-Without a dedicated chip wrapper, low-level register access would leak into broader code. That would weaken readability, testability, and hardware substitution.
+This class prevents low-level bus and register operations from leaking upward into servo policy or control code.
 
 ---
 
 ## `SystemManager`
 
-### Why this class exists
+### Purpose
 
-`SystemManager` is the runtime orchestration boundary. That is the correct role for it. It composes the pipeline, owns worker threads, coordinates queue-driven processing, starts and stops optional backends, manages the tracker state machine, and exposes observer registration for external surfaces such as the GUI.
+`SystemManager` is the runtime orchestration boundary.
 
-This class is large, but it is still architecturally justified because orchestration is a real responsibility in this project. What matters is whether it remains orchestration or turns into computation and hardware logic. In the current implementation, the most important thing is that several responsibilities have already been pushed out of it into dedicated classes.
+It coordinates pipeline wiring, worker threads, queue-driven processing, optional backend startup and shutdown, the tracker state machine, and observer registration for external surfaces such as the GUI.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is runtime orchestration, not low-level device access and not pure algorithmic mapping. That is why classes such as `SunTracker`, `Controller`, `ManualImuCoordinator`, `Kinematics3RRS`, `ActuatorManager`, and `ServoDriver` are so important: they stop `SystemManager` from becoming an unbounded god class.
+Its responsibility is runtime orchestration.
 
-This is better than a single mega-class because the runtime manager can focus on lifecycle and event flow rather than the internals of every stage.
+It does not implement vision, control law, manual-input mapping, IMU estimation, kinematics, safety shaping, or low-level hardware access. Those responsibilities are delegated to dedicated classes.
 
 **Dependency Inversion Principle**
 
-`SystemManager` depends primarily on stage abstractions and owned stage objects rather than embedding the low-level implementation details of every operation directly in itself.
+It coordinates stage objects and stage interfaces rather than embedding the detailed logic of every stage directly into one runtime loop.
 
-**Encapsulation and safe interfaces**
+**Encapsulation**
 
-It exposes observer registration and explicit control methods rather than encouraging direct data access. That is the correct encapsulation model for an event-driven system.
+It exposes explicit observer registration and control methods rather than encouraging direct access to runtime internals.
 
-### Why it is better than the alternative
+### Boundary value
 
-The bad alternative is an Arduino-style master loop or a monolithic class that performs acquisition, tracking, control, manual policy, IMU correction, kinematics, and hardware output inline. That alternative would be worse for timing, worse for testing, worse for maintainability, and weaker against the course criteria.
-
-The current structure is stronger because `SystemManager` remains the coordinator around specialised stages rather than absorbing them.
+This class centralises lifecycle and event flow while preserving dedicated stage boundaries for computation and hardware behaviour.
 
 ---
 
 ## `ThreadSafeQueue`
 
-### Why this class exists
+### Purpose
 
-`ThreadSafeQueue` is the blocking handoff mechanism between event-producing and event-consuming stages. That is the right role for it in this architecture because queueing and waiting are infrastructure concerns, not the responsibility of vision or control classes.
+`ThreadSafeQueue` provides blocking handoff between producer and consumer stages.
 
-Its most important architectural value is not “being a queue”. Its value is that it provides a blocking wait interface and an explicit freshness-preserving `push_latest()` mode for bounded pipelines.
+Its architectural value is not only storage. It also defines blocking wait behaviour and bounded freshest-data queue policy for the runtime pipeline.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is inter-thread queue handoff. It does not perform tracking, control, or hardware access.
+Its responsibility is inter-thread queue handoff.
 
 **Open/Closed Principle**
 
-The queue policy is encapsulated in the queue class rather than being reimplemented ad hoc throughout the codebase.
+Queue policy remains encapsulated in one place instead of being reimplemented ad hoc across the runtime.
 
 **Safe data management**
 
-This class is important for the course criteria because it uses STL-managed storage, explicit stop/reset behaviour, blocking waits, and bounded latest-only insertion policy. That is much safer than manual shared-state polling.
+It uses STL-managed storage, explicit stop/reset behaviour, blocking waits, and bounded latest-only insertion.
 
-### Why it is better than the alternative
+### Boundary value
 
-The weaker alternative is shared mutable state plus polling loops. That would be less deterministic, more CPU-wasteful, and harder to reason about. A blocking queue is the better design for this repository.
+This class provides deterministic handoff points between worker threads and avoids shared-state polling designs.
 
 ---
 
 ## `LinuxEventLoop`
 
-### Why this class exists
+### Purpose
 
-`LinuxEventLoop` keeps `main()` small and isolates headless application control events from the realtime processing core. That is the right boundary because CLI shutdown handling and OS event waiting are application-shell concerns, not part of the tracking pipeline.
+`LinuxEventLoop` isolates headless application-shell events from the realtime processing pipeline.
 
-### SOLID justification
+It keeps process-level input handling and shutdown behaviour outside the tracking stages.
+
+### SOLID role
 
 **Single Responsibility Principle**
 
-It is responsible for the headless application event loop only. It is explicitly not the sensor/control loop.
+Its responsibility is the headless application event loop.
 
-This is better than pushing CLI shutdown logic into `SystemManager` because orchestration of the tracker runtime and shell-level process control are not the same job.
+### Boundary value
 
-### Why it is better than the alternative
-
-Without this class, `main()` or `SystemManager` would take on extra process-control responsibilities. That would muddy the design and weaken the architecture argument.
+This class keeps shell-level process control separate from the tracking runtime.
 
 ---
 
 ## `SystemFactory`
 
-### Why this class exists
+### Purpose
 
-`SystemFactory` is the composition root. It selects and constructs the correct runtime graph while keeping that assembly logic out of `main()`.
+`SystemFactory` is the composition root.
 
-That is exactly the right architectural role for a factory here. The project has multiple backend choices and many cooperating classes. Construction logic should not be smeared across application entry points.
+It selects and constructs the runtime graph and keeps assembly logic out of `main()`.
 
-### SOLID justification
+### SOLID role
 
 **Single Responsibility Principle**
 
-Its responsibility is runtime assembly. It should not run the system, process frames, or operate hardware directly.
+Its responsibility is runtime assembly.
 
 **Dependency Inversion Principle**
 
-It centralises where concrete types are chosen while keeping the running system dependent on narrower interfaces and stage contracts.
+It centralises concrete-type selection while allowing the running system to depend on narrower interfaces and stage contracts.
 
-### Why it is better than the alternative
+### Boundary value
 
-A weaker alternative is to assemble the full runtime directly in `main()` or across several unrelated files. That would make construction logic harder to maintain and harder to explain. A composition root is the cleaner design.
-
----
-
-## Why callbacks are the correct inter-class design here
-
-The project architecture is strongest where it uses callbacks to push events forward rather than getters to pull data backward.
-
-That matters because this is a realtime event-driven system. When a frame arrives, the system should process that event and propagate the result forward. It should not rely on downstream code polling upstream objects for “latest values”. Polling would weaken responsiveness, blur timing ownership, and encourage stale shared-state designs.
-
-Callbacks are therefore not just a stylistic preference here. They are the correct fit for the taught architecture and for this repository’s pipeline structure.
-
-Using callbacks between stages is better than getter-driven designs because:
-
-- event timing remains explicit
-- freshness is preserved
-- ownership boundaries stay cleaner
-- stage coupling is reduced
-- blocking/event-driven sensor paths can wake a worker and push data forward immediately
-
-In this project, callback boundaries support both realtime reasoning and SOLID reasoning. They help keep classes small, event-focused, and decoupled.
+This class keeps backend selection and object assembly separate from runtime execution.
 
 ---
 
-## Why setters remain the correct output-side design
+## Callback structure
 
-On the output side, setter-style interfaces remain the right choice. Upstream logic should emit typed commands into downstream stages. It should not manipulate hardware internals.
+Callbacks are the primary inter-stage event mechanism in the processing pipeline.
 
-That is why the output side of the pipeline is stronger with:
+That choice fits this runtime because sensor and backend events arrive asynchronously and must be pushed forward through the staged pipeline. Callback boundaries make event timing explicit, keep freshness aligned with stage handoff, and avoid pull-style designs in which downstream code repeatedly queries upstream state.
 
-- `Controller` producing platform setpoints
-- `Kinematics3RRS` producing actuator commands
-- `ActuatorManager` conditioning those commands
-- `ServoDriver` applying final hardware-oriented output behaviour
+In this system, callback-based stage interfaces support:
 
-Each step hands forward a more concrete command. That staged setter-style flow is better than letting an upstream class reach into downstream internals.
+- explicit event timing
+- stage-local ownership of processing
+- reduced coupling between pipeline stages
+- direct integration with blocking/event-driven input paths
+- clearer test boundaries between producers and consumers
 
 ---
 
-## Why this class structure is stronger than a monolithic alternative
+## Output-side command flow
 
-A monolithic tracker class would be worse in every way that matters for this project.
+The output side follows a staged command progression.
 
-It would:
+- `Controller` produces platform setpoints
+- `Kinematics3RRS` produces actuator commands
+- `ActuatorManager` conditions those commands
+- `ServoDriver` applies final hardware-oriented output behaviour
 
-- mix Linux I/O, camera backend selection, vision, control, kinematics, safety logic, and servo hardware access
-- make unit testing much harder
-- make failure localisation harder
-- increase the risk of accidental polling-style or mixed-timing designs
-- weaken the argument for encapsulation and maintainability
-- make the system harder to extend with alternative backends or policies
+Each stage hands forward a more concrete representation of the command while preserving clear ownership of policy, mechanism mapping, safety conditioning, and hardware output.
 
-The current class structure is stronger because it preserves distinct architectural layers:
+---
+
+## Architectural summary
+
+The class structure separates the runtime into distinct layers:
 
 - acquisition boundary
 - estimation boundary
 - control boundary
-- policy coordination boundary
-- mechanism mapping boundary
-- safety boundary
-- final hardware boundary
+- manual/IMU policy boundary
+- mechanism-mapping boundary
+- safety-conditioning boundary
+- final hardware-output boundary
 - orchestration boundary
 - application-shell boundary
 
-That separation is exactly what allows the project to argue for both realtime correctness and software-engineering quality.
-
----
+That separation supports hardware isolation, event-driven processing, bounded inter-thread handoff, staged reasoning about faults, and focused testing of individual behaviours.
 
 ## Final judgement
 
-The strongest SOLID choices in this repository are not abstract textbook gestures. They are the class boundaries that prevent the project from collapsing into one tightly coupled runtime blob.
+The class structure is strongest where it keeps platform-specific code isolated, preserves clear event flow between stages, and separates policy, computation, orchestration, and hardware output into dedicated boundaries.
 
-The most defensible decisions are:
+The key architectural decisions are:
 
-- `ICamera` as the acquisition abstraction
+- `ICamera` as the frame-source abstraction
 - backend isolation in `LibcameraPublisher` and `SimulatedPublisher`
-- pure logic separation in `SunTracker`, `Controller`, `ManualInputMapper`, `ImuTiltEstimator`, and `ImuFeedbackMapper`
+- dedicated logic stages in `SunTracker`, `Controller`, `ManualInputMapper`, `ImuTiltEstimator`, and `ImuFeedbackMapper`
 - policy isolation in `ManualImuCoordinator`
-- mechanism separation in `Kinematics3RRS`
-- explicit safety conditioning in `ActuatorManager`
+- mechanism isolation in `Kinematics3RRS`
+- safety conditioning in `ActuatorManager`
 - final hardware mapping isolation in `ServoDriver` and `PCA9685`
-- orchestration centralisation in `SystemManager`
-- composition isolation in `SystemFactory`
+- orchestration in `SystemManager`
+- runtime assembly in `SystemFactory`
 
-That is why this class structure is stronger than the obvious alternatives. It improves maintainability, preserves event-driven design, isolates hardware volatility, supports testing, and makes the system defendable against the ENG5220 structure and realtime criteria.
+Together, these boundaries support a maintainable staged runtime rather than a tightly coupled monolithic tracker implementation.

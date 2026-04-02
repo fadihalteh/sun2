@@ -49,7 +49,7 @@ float Controller::applyDeadband_(float value) const {
 }
 
 void Controller::onEstimate(const SunEstimate& est) {
-    // Local configuration snapshot for this control update.
+    // Local configuration for this control update.
     Config cfg_copy;
     {
         std::lock_guard<std::mutex> lock(cfg_mtx_);

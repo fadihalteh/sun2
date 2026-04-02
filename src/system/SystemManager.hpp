@@ -150,7 +150,7 @@ public:
     /**
      * @brief Return the current tracker state.
      *
-     * @return Current state snapshot.
+     * @return Current state.
      */
     TrackerState state() const;
 

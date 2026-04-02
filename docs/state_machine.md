@@ -249,7 +249,7 @@ flowchart TD
 ## 7. Implementation Notes
 
 - automatic processing runs only in SEARCHING and TRACKING
-- manual callbacks no longer directly drive downstream kinematics work
+- manual callbacks directly drive downstream kinematics work
 - manual commands are continuous because the control thread consumes manual state on each control tick
 - GUI manual mode is continuous while dragging the slider
 - GUI manual mode does not use Qt timers as a control timing source

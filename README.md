@@ -104,7 +104,7 @@ See:
 - Issues for feature planning and bug tracking
 - Milestones for delivery stages
 - Pull requests for reviewed changes
-- Releases for submission snapshots
+- Releases 
 ---
 
 ## Key Features

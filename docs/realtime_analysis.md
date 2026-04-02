@@ -2,186 +2,164 @@
 
 ## Purpose
 
-This document analyses the realtime-relevant design choices in the repository.
+This document describes the realtime execution model and timing behaviour of the system.
 
 ---
 
 ## 1. Runtime Model
 
-The system uses a Linux userspace, event-driven runtime model built around:
+The system operates as a Linux userspace, event-driven runtime built on:
 
-- `poll()` on Linux file descriptors for the application event loop
-- blocking `condition_variable` waits for inter-thread data transfer
-- GPIO edge callbacks for hardware sensor wakeup
-- explicit state machine control with no implicit transitions
+- poll() on file descriptors for application-level events  
+- blocking std::condition_variable waits for inter-thread communication  
+- GPIO edge-triggered callbacks for hardware sensor events  
+- explicit state machine transitions  
 
-There is no top-level polling loop, no `sleep()`-based pacing, and no busy-waiting anywhere in the processing path.
-
----
-
-## 2. Application Event Loop — `LinuxEventLoop`
-
-`src/app/LinuxEventLoop.cpp` implements the headless runtime lifecycle. It multiplexes three event sources in a single `poll()` call with an infinite timeout (`-1`):
-
-| File Descriptor | Source | Purpose |
-|---|---|---|
-| `signalfd` | `SIGINT` / `SIGTERM` | Clean shutdown on OS signal |
-| `timerfd` (`CLOCK_MONOTONIC`) | Configurable tick rate (default 30 Hz) | CLI servicing |
-| `stdin` (dup'd) | Terminal | Keyboard command input |
-
-The loop does not wake on anything else. Between events it is fully blocked in the kernel.
-
-This means the headless runtime has zero CPU cost while idle — it is structurally incapable of a busy-wait.
+No component introduces polling loops, sleep()-based pacing, or busy-waiting in the processing path.
 
 ---
 
-## 3. Inter-Thread Queues — `ThreadSafeQueue`
+## 2. Application Event Loop — LinuxEventLoop
 
-`src/common/ThreadSafeQueue.hpp` is the transport between the camera, control, and actuator threads. The implementation uses `std::mutex` and `std::condition_variable` with blocking `wait_pop()`.
+src/app/LinuxEventLoop.cpp implements the headless runtime lifecycle. It multiplexes event sources using a single poll() call with an infinite timeout (-1).
 
-Two queue instances are declared in `SystemManager`:
+File descriptors:
 
-| Queue | Type | Capacity | Push Policy |
-|---|---|---|---|
-| `frame_q_` | `ThreadSafeQueue<FrameEvent>` | 2 | `push_latest()` — drops oldest |
-| `cmd_q_` | `ThreadSafeQueue<ActuatorCommand>` | 8 | `push_latest()` — drops oldest |
+- signalfd → SIGINT / SIGTERM → clean shutdown  
+- timerfd (CLOCK_MONOTONIC) → configurable tick (default 30 Hz) → CLI servicing  
+- stdin (dup’d) → terminal input  
 
-The `push_latest()` policy is appropriate for this system: if a consumer thread falls behind, it processes the most recent data rather than working through a stale backlog. The bounded capacity prevents unbounded memory growth under load.
+The loop remains blocked in the kernel until an event occurs.
+
+---
+
+## 3. Inter-Thread Queues — ThreadSafeQueue
+
+src/common/ThreadSafeQueue.hpp provides blocking data transfer between worker threads using std::mutex and std::condition_variable with wait_pop().
+
+Two queues are defined in SystemManager:
+
+- frame_q_ → ThreadSafeQueue<FrameEvent> → capacity 2 → push_latest()  
+- cmd_q_ → ThreadSafeQueue<ActuatorCommand> → capacity 8 → push_latest()  
+
+The push_latest() policy ensures consumers process the most recent data when under load. Queue sizes remain bounded.
 
 ---
 
 ## 4. Worker Threads
 
-`SystemManager` owns two `std::thread` workers:
+SystemManager owns two worker threads.
 
-### Control Thread — `controlLoop_()`
+Control thread (controlLoop_):
 
-The control thread blocks on `frame_q_.wait_pop()`. The same blocking wakeups are now reused for both automatic and manual processing:
+- blocks on frame_q_.wait_pop()  
+- processes frames through SunTracker and Controller in automatic modes  
+- builds manual setpoints from stored input state in manual mode  
+- performs all command generation  
 
-- in SEARCHING/TRACKING, the thread forwards the frame into `SunTracker`
-- in MANUAL, the thread calls `submitManualSetpointFromControlTick_(...)` and builds the  manual setpoint from stored GUI target state or the latest potentiometer sample
+Actuator thread (actuatorLoop_):
 
-This means manual mode is continuous without introducing a separate timer loop, GUI-driven control loop, or polling thread.
-
-### Actuator Thread — `actuatorLoop_()`
-
-The actuator thread blocks on `cmd_q_.wait_pop()` and applies:
-
-`ActuatorManager -> ServoDriver`
-
-There is no alternative actuation shortcut.
+- blocks on cmd_q_.wait_pop()  
+- applies ActuatorManager → ServoDriver  
+- no alternative actuation path exists  
 
 ---
 
 ## 5. Sensor Wakeups
 
-### Camera
+Camera:
 
-- `SimulatedPublisher` uses `timerfd` + `poll()` + `eventfd`
-- `LibcameraPublisher` uses callback delivery from the libcamera wrapper path
+- SimulatedPublisher uses timerfd + poll() + eventfd  
+- LibcameraPublisher delivers frames via callback-based backend  
 
-### Manual potentiometer input
+Manual input:
 
-`ADS1115ManualInput` uses the ADS1115 ALERT/RDY GPIO edge to wake the acquisition path. The callback updates the latest manual potentiometer sample, but does not directly perform downstream kinematics work.
+- ADS1115ManualInput uses ALERT/RDY GPIO edge  
+- callback updates stored manual state only  
 
-### IMU
+IMU:
 
-`Mpu6050Publisher` uses a GPIO data-ready interrupt path. IMU samples are forwarded into `ManualImuCoordinator`.
+- Mpu6050Publisher uses GPIO data-ready interrupt  
+- samples forwarded to coordinator  
 
 ---
 
-## 6. Automatic and Manual Paths
+## 6. Data Flow
 
-### Automatic path
+Automatic path:
 
-```text
-Frame callback
-→ frame_q_.push_latest(...)
-→ control thread wait_pop()
-→ SunTracker
-→ Controller
-→ ManualImuCoordinator::applyImuCorrection(...)
-→ Kinematics3RRS
-→ cmd_q_.push_latest(...)
-→ actuator thread wait_pop()
-→ ActuatorManager
-→ ServoDriver
-```
+Frame callback  
+→ frame_q_.push_latest(...)  
+→ control thread wait_pop()  
+→ SunTracker  
+→ Controller  
+→ ManualImuCoordinator::applyImuCorrection(...)  
+→ Kinematics3RRS  
+→ cmd_q_.push_latest(...)  
+→ actuator thread wait_pop()  
+→ ActuatorManager  
+→ ServoDriver  
 
-### Manual path after refactor
+Manual path:
 
-```text
-GUI slider valueChanged / ADS1115 callback
-→ store latest manual state only
-→ control thread wait_pop()
-→ submitManualSetpointFromControlTick_(...)
-→ ManualImuCoordinator builds manual setpoint
-→ Kinematics3RRS
-→ cmd_q_.push_latest(...)
-→ actuator thread wait_pop()
-→ ActuatorManager
-→ ServoDriver
-```
+GUI valueChanged / ADS1115 callback  
+→ store latest manual state  
+→ control thread wait_pop()  
+→ ManualImuCoordinator builds manual setpoint  
+→ Kinematics3RRS  
+→ cmd_q_.push_latest(...)  
+→ actuator thread wait_pop()  
+→ ActuatorManager  
+→ ServoDriver  
 
-This is not identical to the automatic path, but it is materially cleaner than a direct GUI/callback-to-kinematics shortcut and keeps timing ownership inside the blocking-wakeup runtime.
+Both paths are processed through the same control and actuation stages. The control thread maintains timing ownership in all modes.
 
 ---
 
 ## 7. Qt GUI Timing
 
-Qt timers are used for GUI refresh and charts, not for reliable control timing.
+Qt timers are used only for UI refresh and visualisation.
 
-The GUI manual sliders now update the stored GUI target on `valueChanged`, but the GUI still does not own the control cadence. The actual continuous command submission happens in the control thread on the same blocking wakeups used elsewhere in the runtime.
-
-This is the critical distinction:
-
-- **GUI:** updates desired manual state
-- **control thread:** turns that state into continuous actuator-driving setpoints
+GUI interactions update stored manual state via valueChanged. The GUI does not generate actuator commands. Continuous command generation remains in the control thread.
 
 ---
 
 ## 8. IMU Policy in Manual Mode
 
-GUI manual mode does **not** apply live IMU correction by default. This is deliberate:
+Manual GUI input does not apply continuous IMU correction by default. Manual commands are generated directly from operator input.
 
-- it keeps operator-selected manual targets stable
-- it avoids injecting IMU noise into every GUI manual update
-- it reduces the risk of chatter or vibration
-
-Pot/manual mode can still use IMU-assisted behaviour according to the configured policy.
+IMU-assisted behaviour can be enabled through configured feedback modes.
 
 ---
 
 ## 9. Shutdown Behaviour
 
-`stop()`:
+stop() performs:
 
-- stops the camera
-- stops optional backends
-- stops the frame and command queues
-- joins the worker threads
-- applies neutral/park logic
-- stops the servo driver
+- camera shutdown  
+- backend shutdown  
+- queue termination  
+- worker thread join  
+- actuator neutral/park handling  
+- servo driver shutdown  
 
-Because the queues notify blocked waiters on stop, worker threads wake cleanly and do not hang in shutdown.
+Queues notify blocked threads during shutdown, ensuring clean exit.
 
 ---
+
 ## 10. Summary
 
-The runtime follows a single, consistent execution model across the entire system:
+The runtime follows a consistent event-driven execution model:
 
-- all long-lived threads block on kernel-backed primitives (`poll`, `condition_variable`)
-- all wakeups originate from real events (file descriptors, queue notifications, GPIO edges)
-- no component introduces sleep-based pacing, polling loops, or independent timing sources
+- all worker threads block on kernel-backed primitives (poll, condition_variable)  
+- all wakeups originate from external events (file descriptors, queue notifications, GPIO interrupts)  
+- no component introduces independent timing loops or polling  
 
-Control authority is centralised in the control thread. It is the only component responsible for transforming input state into actuator commands.
+Control execution is centralised in a single thread. All inputs are reduced to state and processed within that thread before actuation.
 
-All input sources, including camera frames, manual GUI inputs, and hardware sensor data, are first reduced to state and then processed within the control thread. No external callback or UI event directly drives kinematics or actuator output.
+This structure ensures:
 
-As a result:
-
-- automatic and manual operation share the same execution pipeline
-- actuator commands originate from a single thread with deterministic ordering
-- the GUI remains strictly non-realtime and does not influence control timing
-
-The system is fully event-driven, with clear ownership of execution, data flow, and actuation, and without hidden timing paths or parallel control mechanisms.
+- a single, deterministic control path  
+- consistent behaviour across automatic and manual modes  
+- separation between realtime processing and UI interaction  
+- explicit ownership of timing and data flow  
