@@ -310,7 +310,7 @@ sequenceDiagram
 ## Circuit Diagram
 
 <p align="center">
-  <img src="diagrams/circuit_diagram.png" alt="Circuit Diagram" width="900">
+  <img src="diagrams/circuit_diagram.jpeg" alt="Circuit Diagram" width="900">
 </p>
 
 The hardware setup connects:
