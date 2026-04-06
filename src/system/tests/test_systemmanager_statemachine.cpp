@@ -29,6 +29,32 @@ using solar::app::ManualInputBackend;
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Spin-yield until @p condition becomes true or @p timeout_ms elapses.
+ *
+ * @return True if the condition was observed within the timeout period.
+ */
+template <typename Predicate>
+bool waitFor(Predicate condition, int timeout_ms = 500) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (!condition()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// FakeCamera
+// ---------------------------------------------------------------------------
+
 class FakeCamera final : public ICamera {
 public:
     void registerFrameCallback(FrameCallback cb) override {
@@ -76,6 +102,10 @@ private:
     FrameCallback cb_{};
 };
 
+// ---------------------------------------------------------------------------
+// Shared config factory
+// ---------------------------------------------------------------------------
+
 AppConfig makeBaseConfig() {
     AppConfig cfg = solar::app::defaultConfig();
     cfg.camera_backend = CameraBackend::Simulated;
@@ -93,6 +123,10 @@ AppConfig makeBaseConfig() {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 TEST_CASE(SystemManager_start_to_searching_then_tracking_on_bright_frame) {
     Logger log;
     auto cam = std::make_unique<FakeCamera>();
@@ -105,8 +139,25 @@ TEST_CASE(SystemManager_start_to_searching_then_tracking_on_bright_frame) {
     REQUIRE(system.start());
     REQUIRE(system.state() == TrackerState::SEARCHING);
 
+    // Register an observer before emitting the frame so no state transition
+    // can be missed between the emit call and the first observation below.
+    std::atomic<bool> tracking_seen{false};
+    system.registerStateObserver([&](TrackerState s) {
+        if (s == TrackerState::TRACKING) {
+            tracking_seen.store(true, std::memory_order_release);
+        }
+    });
+
     cam_ptr->emitBrightCenteredFrame(1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Wait for the control thread to process the frame and update state.
+    // A 500 ms bound is generous relative to the expected sub-millisecond
+    // processing time and avoids any fixed delay in the test path.
+    const bool observed = waitFor([&] {
+        return tracking_seen.load(std::memory_order_acquire) ||
+               system.state() == TrackerState::SEARCHING;
+    });
+    REQUIRE(observed);
 
     REQUIRE(system.state() == TrackerState::TRACKING ||
             system.state() == TrackerState::SEARCHING);
@@ -135,23 +186,25 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
         command_count.fetch_add(1, std::memory_order_relaxed);
     });
 
+    // Verify no commands are generated before any frame reaches the control thread.
     system.setManualSetpoint(0.1F, -0.1F);
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    REQUIRE(command_count.load(std::memory_order_acquire) == 0);
 
-    REQUIRE(command_count.load(std::memory_order_relaxed) == 0);
-
+    // Emit the first frame and wait for at least one command to be produced.
     cam_ptr->emitBrightCenteredFrame(1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(waitFor([&] { return command_count.load(std::memory_order_acquire) > 0; }));
 
-    const int first_count = command_count.load(std::memory_order_relaxed);
+    const int first_count = command_count.load(std::memory_order_acquire);
     REQUIRE(first_count > 0);
 
-    // Manual GUI mode remain continuous on later control ticks without
-    // needing another setManualSetpoint() call.
+    // Emit a second frame and confirm that continuous manual mode advances
+    // the command count without requiring a repeated setManualSetpoint() call.
     cam_ptr->emitBrightCenteredFrame(2);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(waitFor([&] {
+        return command_count.load(std::memory_order_acquire) > first_count;
+    }));
 
-    REQUIRE(command_count.load(std::memory_order_relaxed) > first_count);
+    REQUIRE(command_count.load(std::memory_order_acquire) > first_count);
 
     system.stop();
 }

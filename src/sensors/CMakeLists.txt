@@ -14,6 +14,7 @@ target_link_libraries(solar_sensors
     PUBLIC
         solar_common
         solar_hal
+        gpioevent_static
 )
 
 target_compile_definitions(solar_sensors

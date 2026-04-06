@@ -38,7 +38,7 @@ Each test executable is built by linking `test_main.cpp` together with one or mo
 
 ```bash
 # Run all tests compiled into an executable
-./build/src/control/tests/test_control
+./build-pi/src/control/tests/test_control
 ```
 
 With no arguments an executable runs every test compiled into it. CTest remains the primary interface for selecting and running tests. Individual test binaries can also be run directly from the build tree, but their command-line interfaces are not assumed to be uniform across all executables.
@@ -86,8 +86,8 @@ ctest --test-dir build -C Release --output-on-failure
 
 | Condition | CTest entries |
 |---|---:|
-| `SOLAR_ENABLE_TESTS=ON` only | 44 |
-| `SOLAR_ENABLE_TESTS=ON` and `SOLAR_ENABLE_HW_TESTS=ON` | 61 |
+| `SOLAR_ENABLE_TESTS=ON` only | 55 |
+| `SOLAR_ENABLE_TESTS=ON` and `SOLAR_ENABLE_HW_TESTS=ON` | 75 |
 
 ---
 
@@ -120,10 +120,15 @@ Executable: `test_control` — Source: `src/control/tests/test_kinematics.cpp`
 
 | CTest Case | What It Covers |
 |---|---|
-| `Kinematics3RRS_outputs_in_range_and_integer_like` | Output sanity and range |
-| `Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes` | Continuity for small input changes |
-| `Kinematics3RRS_invalid_geometry_is_surfaced_explicitly` | Invalid-geometry surfacing |
-| `Kinematics3RRS_falls_back_to_last_valid_when_subsequent_config_is_bad` | Fallback after a previously valid state |
+| `Kinematics3RRS_outputs_in_range_for_moderate_setpoint` | Output sanity and servo range |
+| `Kinematics3RRS_neutral_setpoint_produces_near_neutral_angles` | Neutral symmetry |
+| `Kinematics3RRS_frame_id_forwarded_through_callback` | Frame ID propagation |
+| `Kinematics3RRS_small_setpoint_changes_produce_small_output_changes` | Continuity for small input changes |
+| `Kinematics3RRS_zero_setpoint_after_valid_does_not_trigger_fallback` | Zero setpoint does not degrade |
+| `Kinematics3RRS_large_reachable_setpoint_stays_in_range` | Workspace boundary check |
+| `Kinematics3RRS_invalid_geometry_surfaces_error_status` | Invalid-geometry error surfacing |
+| `Kinematics3RRS_first_invalid_then_second_invalid_stays_in_range` | Consecutive invalid configs safe |
+| `Kinematics3RRS_good_then_bad_geometry_falls_back_to_last_valid` | Fallback after previously valid state |
 
 ### 5.4 ManualInputMapper
 
@@ -207,8 +212,14 @@ Sources: `src/system/tests/test_systemmanager_statemachine.cpp`, `src/system/tes
 | `SystemManager_manual_mode_emits_commands` | Manual mode command emission |
 | `SystemManager_start_with_null_camera_enters_fault_and_fails` | Fault entry on null camera |
 | `SystemManager_start_when_camera_start_fails_enters_fault` | Fault entry on camera start failure |
-| `SystemManager_ImuShadowMode_StartsWithoutImuBackendWhenDisabled` | IMU shadow-mode startup behaviour |
-| `SystemManager_ImuShadowMode_DoesNotPreventManualModeTransitions` | IMU shadow-mode interaction with manual transitions |
+| `SystemManager_ImuShadow_StartsWithoutImuBackend` | IMU shadow-mode startup without backend |
+| `SystemManager_ImuDisabled_StartsNormally` | IMU disabled mode starts normally |
+| `SystemManager_ImuShadow_ManualModeTransitions` | Shadow mode does not block manual transitions |
+| `SystemManager_ImuShadow_NullCameraEntersFault` | Null camera enters FAULT |
+| `SystemManager_ImuShadow_CameraStartFailureEntersFault` | Camera start failure enters FAULT |
+| `SystemManager_ImuShadow_StopFromIdleIsIdempotent` | Stop from IDLE is a safe no-op |
+| `SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured` | Live mode degrades gracefully without IMU |
+| `SystemManager_ImuShadow_StateObserverReceivesTransitions` | State observer receives startup transitions |
 
 ---
 
@@ -247,9 +258,12 @@ Executable: `test_mpu6050_publisher` — Source: `src/sensors/tests/test_mpu6050
 
 | CTest Case | What It Covers |
 |---|---|
-| `Mpu6050Publisher_StartFailsWithoutCallback` | Callback requirement |
-| `Mpu6050Publisher_StartFailsIfWhoAmIDoesNotMatch` | Identity check |
-| `Mpu6050Publisher_StartInitialisesDevice_WhenWhoAmIMatches` | Correct initialisation path |
+| `Mpu6050Publisher_StartFailsWithoutCallback` | Callback pre-condition (software) |
+| `Mpu6050Publisher_StartFailsIfWhoAmIDoesNotMatch` | WHO_AM_I identity check (software) |
+| `Mpu6050Publisher_InitialisesExpectedRegisters` | Six init registers written before GPIO (software) |
+| `Mpu6050Publisher_StartSucceedsAndStopClosesDevice` | Full start/stop lifecycle (hardware, GPIO 27) |
+| `Mpu6050Publisher_DoubleStartReturnsFalse` | Double-start guard (hardware, GPIO 27) |
+| `Mpu6050Publisher_StartupDiscardPreventsEarlyCallbacks` | Startup discard window (hardware, GPIO 27) |
 
 ### 6.4 Linux I2C Hardware Check
 
@@ -281,26 +295,29 @@ Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp
 
 ```bash
 # Run all CTest-registered checks
-ctest --test-dir build --output-on-failure
+ctest --test-dir build-pi --output-on-failure -LE hw
+
+# Run hardware tests (requires hardware connected)
+SOLAR_RUN_I2C_HW_TESTS=1 ctest --test-dir build-pi --output-on-failure
 
 # Run one CTest entry by name
-ctest --test-dir build --output-on-failure -R Controller_OutputClamped
+ctest --test-dir build-pi --output-on-failure -R Controller_OutputClamped
 
 # Run individual module executables directly
-./build/src/vision/tests/test_vision
-./build/src/control/tests/test_control
-./build/src/common/tests/test_common_core
-./build/src/actuators/tests/test_actuators
-./build/src/system/tests/test_system
+./build-pi/src/vision/tests/test_vision
+./build-pi/src/control/tests/test_control
+./build-pi/src/common/tests/test_common_core
+./build-pi/src/actuators/tests/test_actuators
+./build-pi/src/system/tests/test_system
 
 # Enable and build hardware-adjacent tests
-cmake -S . -B build -DSOLAR_ENABLE_HW_TESTS=ON
-cmake --build build -j
+cmake -S . -B build-pi -G Ninja -DSOLAR_ENABLE_TESTS=ON -DSOLAR_ENABLE_HW_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-pi -j
 
 # Run hardware-adjacent executables directly
-./build/src/actuators/tests/test_pca9685
-./build/src/actuators/tests/test_servodriver
-./build/src/sensors/tests/test_mpu6050_publisher
+./build-pi/src/actuators/tests/test_pca9685
+./build-pi/src/actuators/tests/test_servodriver
+./build-pi/src/sensors/tests/test_mpu6050_publisher
 ```
 
 

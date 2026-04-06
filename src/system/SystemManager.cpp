@@ -33,10 +33,14 @@ app::AppConfig makeNoBackendConfig_(const Controller::Config& controllerCfg) {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// BackendCoordinator — optional hardware backend bring-up and teardown
+// ---------------------------------------------------------------------------
+
 class SystemManager::BackendCoordinator {
 public:
     using ManualCallback = std::function<void(const ManualPotSample&)>;
-    using ImuCallback = std::function<void(const control::ImuSample&)>;
+    using ImuCallback    = std::function<void(const control::ImuSample&)>;
 
     struct StartResult {
         bool manual_ok{true};
@@ -84,11 +88,11 @@ private:
 
         void hasSample(const IImuSample& sample) override {
             control::ImuSample mapped{};
-            mapped.ax = sample.ax_mps2;
-            mapped.ay = sample.ay_mps2;
-            mapped.az = sample.az_mps2;
+            mapped.ax           = sample.ax_mps2;
+            mapped.ay           = sample.ay_mps2;
+            mapped.az           = sample.az_mps2;
             mapped.timestamp_us = sample.timestamp_us;
-            mapped.valid = sample.valid;
+            mapped.valid        = sample.valid;
 
             if (callback_) {
                 callback_(mapped);
@@ -105,16 +109,16 @@ private:
         }
 
         ADS1115ManualInputSettings s{};
-        s.enabled = config_.ads1115_manual.enabled;
-        s.i2c_bus = config_.ads1115_manual.i2c_bus;
-        s.i2c_address = config_.ads1115_manual.i2c_address;
-        s.gpio_chip_index = config_.ads1115_manual.gpio_chip_index;
-        s.alert_rdy_gpio = config_.ads1115_manual.alert_rdy_gpio;
-        s.tilt_channel = config_.ads1115_manual.tilt_channel;
-        s.pan_channel = config_.ads1115_manual.pan_channel;
-        s.spare_channel = config_.ads1115_manual.spare_channel;
+        s.enabled            = config_.ads1115_manual.enabled;
+        s.i2c_bus            = config_.ads1115_manual.i2c_bus;
+        s.i2c_address        = config_.ads1115_manual.i2c_address;
+        s.gpio_chip_index    = config_.ads1115_manual.gpio_chip_index;
+        s.alert_rdy_gpio     = config_.ads1115_manual.alert_rdy_gpio;
+        s.tilt_channel       = config_.ads1115_manual.tilt_channel;
+        s.pan_channel        = config_.ads1115_manual.pan_channel;
+        s.spare_channel      = config_.ads1115_manual.spare_channel;
         s.full_scale_voltage = config_.ads1115_manual.full_scale_voltage;
-        s.sample_rate_hz = config_.ads1115_manual.sample_rate_hz;
+        s.sample_rate_hz     = config_.ads1115_manual.sample_rate_hz;
 
         manual_input_ = std::make_unique<ADS1115ManualInput>(s);
         manual_input_->registerCallback([this](const ManualPotSample& sample) {
@@ -146,30 +150,15 @@ private:
 
         imu_i2c_ = std::make_unique<LinuxI2CDevice>();
 
+        // Map only the system-integration fields from AppConfig. Register-level
+        // initialisation constants are encapsulated inside Mpu6050Publisher
+        // and are not part of the application configuration surface.
         Mpu6050Config cfg{};
-        cfg.i2c.bus = config_.mpu6050.i2c_bus;
-        cfg.i2c.address = config_.mpu6050.i2c_address;
-        cfg.gpio_pin_no = static_cast<int>(config_.mpu6050.data_ready_gpio);
-        cfg.gpio_chip_no = config_.mpu6050.gpio_chip_index;
-        cfg.who_am_i_reg = config_.mpu6050.who_am_i_reg;
-        cfg.who_am_i_expected = config_.mpu6050.who_am_i_expected;
-        cfg.power_mgmt_reg = config_.mpu6050.power_mgmt_reg;
-        cfg.sample_rate_div_reg = config_.mpu6050.sample_rate_div_reg;
-        cfg.config_reg = config_.mpu6050.config_reg;
-        cfg.gyro_config_reg = config_.mpu6050.gyro_config_reg;
-        cfg.accel_config_reg = config_.mpu6050.accel_config_reg;
-        cfg.int_enable_reg = config_.mpu6050.int_enable_reg;
-        cfg.int_status_reg = config_.mpu6050.int_status_reg;
-        cfg.sample_start_reg = config_.mpu6050.sample_start_reg;
-        cfg.wake_value = config_.mpu6050.wake_value;
-        cfg.sample_rate_div_value = config_.mpu6050.sample_rate_div_value;
-        cfg.config_value = config_.mpu6050.config_value;
-        cfg.gyro_config_value = config_.mpu6050.gyro_config_value;
-        cfg.accel_config_value = config_.mpu6050.accel_config_value;
-        cfg.int_enable_value = config_.mpu6050.int_enable_value;
-        cfg.data_ready_mask = config_.mpu6050.data_ready_mask;
-        cfg.accel_lsb_per_g = config_.mpu6050.accel_lsb_per_g;
-        cfg.gyro_lsb_per_dps = config_.mpu6050.gyro_lsb_per_dps;
+        cfg.i2c.bus                 = config_.mpu6050.i2c_bus;
+        cfg.i2c.address             = config_.mpu6050.i2c_address;
+        cfg.gpio_pin_no             = static_cast<int>(config_.mpu6050.data_ready_gpio);
+        cfg.gpio_chip_no            = config_.mpu6050.gpio_chip_index;
+        cfg.who_am_i_expected       = config_.mpu6050.who_am_i_expected;
         cfg.startup_discard_samples = config_.mpu6050.startup_discard_samples;
 
         imu_input_ = std::make_unique<Mpu6050Publisher>(*imu_i2c_, cfg);
@@ -183,7 +172,7 @@ private:
             return false;
         }
 
-        log.info("SystemManager: MPU6050 backend started");
+        log.info("SystemManager: MPU6050/ICM-20600 backend started");
         return true;
     }
 
@@ -199,16 +188,20 @@ private:
 private:
     app::AppConfig config_{};
     ManualCallback manual_callback_{};
-    ImuCallback imu_callback_{};
+    ImuCallback    imu_callback_{};
 
     bool manual_backend_requested_{false};
     bool imu_backend_requested_{false};
 
-    std::unique_ptr<ADS1115ManualInput> manual_input_{};
-    std::unique_ptr<LinuxI2CDevice> imu_i2c_{};
-    std::unique_ptr<IIMU> imu_input_{};
+    std::unique_ptr<ADS1115ManualInput>   manual_input_{};
+    std::unique_ptr<LinuxI2CDevice>       imu_i2c_{};
+    std::unique_ptr<IIMU>                 imu_input_{};
     std::unique_ptr<ImuCallbackForwarder> imu_callback_forwarder_{};
 };
+
+// ---------------------------------------------------------------------------
+// Constructors / destructor
+// ---------------------------------------------------------------------------
 
 SystemManager::SystemManager(
     Logger& log,
@@ -224,7 +217,6 @@ SystemManager::SystemManager(
       driver_(log_, cfg.servo),
       latency_(log_),
       config_(cfg),
-      min_confidence_(cfg.controller.min_confidence),
       manual_imu_(cfg.manual_mapping,
                   cfg.imu_feedback,
                   cfg.imu_feedback_mode,
@@ -255,7 +247,6 @@ SystemManager::SystemManager(
       driver_(log_, drvCfg),
       latency_(log_),
       config_(makeNoBackendConfig_(controllerCfg)),
-      min_confidence_(controllerCfg.min_confidence),
       manual_imu_({3.3F, false, false, 0.0F, 0.0F, 20.0F, 20.0F},
                   {0.12F, 0.01745329252F, 0.01745329252F},
                   app::ImuFeedbackMode::Disabled,
@@ -275,6 +266,10 @@ SystemManager::~SystemManager() {
 void SystemManager::setManualCommandSource(const ManualCommandSource src) {
     manual_imu_.setManualCommandSource(src);
 }
+
+// ---------------------------------------------------------------------------
+// Callback wiring
+// ---------------------------------------------------------------------------
 
 void SystemManager::initialiseCallbacks_() {
     latency_.registerObserver([this](std::uint64_t frame_id,
@@ -318,7 +313,10 @@ void SystemManager::initialiseCallbacks_() {
             return;
         }
 
-        setState_(est.confidence >= min_confidence_
+        // Confidence threshold is read from the single authoritative location
+        // in config_ so it remains consistent with the value set by
+        // setMinConfidence().
+        setState_(est.confidence >= config_.controller.min_confidence
                       ? TrackerState::TRACKING
                       : TrackerState::SEARCHING);
 
@@ -384,6 +382,10 @@ void SystemManager::initialiseCallbacks_() {
         driver_.apply(out);
     });
 }
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 
 bool SystemManager::start() {
     bool expected = false;
@@ -502,7 +504,20 @@ void SystemManager::stop() {
     log_.info("SystemManager stopped");
 }
 
+// ---------------------------------------------------------------------------
+// Worker threads
+// ---------------------------------------------------------------------------
+
 void SystemManager::controlLoop_() {
+    // The control thread blocks on frame_q_.wait_pop() and wakes on camera
+    // frame arrivals. It handles:
+    //   - Automatic mode: full vision and control pipeline per frame.
+    //   - GUI manual mode: manual setpoint consumed on each frame tick.
+    //     (GUI manual mode uses frame-rate timing since setpoints arrive via
+    //      user interaction rather than hardware events.)
+    //
+    // Pot-driven manual mode is handled directly in onManualPotSample_() and
+    // does not require the control thread to wake.
     while (true) {
         const auto item = frame_q_.wait_pop();
         if (!item.has_value()) {
@@ -544,6 +559,10 @@ void SystemManager::actuatorLoop_() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Event handlers
+// ---------------------------------------------------------------------------
+
 void SystemManager::onFrame_(const FrameEvent& fe) {
     latency_.onCapture(fe.frame_id, fe.t_capture);
 
@@ -577,6 +596,50 @@ void SystemManager::onManualPotSample_(const ManualPotSample& sample) {
     if (cb) {
         cb(sample);
     }
+
+    // When the system is in MANUAL mode and the potentiometer is the active
+    // command source, dispatch the setpoint directly to kinematics in this
+    // callback context rather than routing through the control thread via a
+    // synthetic frame. This gives the pot-driven manual path a first-class,
+    // independently-timed event path driven by the ADS1115 ALERT/RDY cadence.
+    if (state_.load() != TrackerState::MANUAL) {
+        return;
+    }
+    if (manual_imu_.manualCommandSource() != ManualCommandSource::Pot) {
+        return;
+    }
+
+    const std::uint64_t id = nextSyntheticFrameId_();
+    const auto t_now = std::chrono::steady_clock::now();
+
+    PlatformSetpoint sp{};
+    const bool ok = manual_imu_.buildManualSetpointFromPot(
+        sample,
+        state_.load(),
+        id,
+        t_now,
+        sp);
+
+    if (!ok) {
+        return;
+    }
+
+    Controller::SetpointCallback sp_cb;
+    {
+        std::lock_guard<std::mutex> lk(obs_mtx_);
+        sp_cb = setpoint_obs_;
+    }
+    if (sp_cb) {
+        sp_cb(sp);
+    }
+
+    latency_.onControl(sp.frame_id, sp.t_control);
+
+    const PlatformSetpoint final_sp = manual_imu_.applyImuCorrection(sp);
+    {
+        std::lock_guard<std::mutex> lk(kin_mtx_);
+        kinematics_.onSetpoint(final_sp);
+    }
 }
 
 void SystemManager::submitManualSetpointFromControlTick_(
@@ -587,8 +650,15 @@ void SystemManager::submitManualSetpointFromControlTick_(
     }
 
     const ManualCommandSource source = manual_imu_.manualCommandSource();
-    PlatformSetpoint sp{};
 
+    // Pot-driven manual commands are dispatched directly from onManualPotSample_()
+    // at the ADS1115 conversion rate. The control thread handles only GUI-sourced
+    // manual commands, which arrive via setManualSetpoint() rather than hardware events.
+    if (source != ManualCommandSource::Gui) {
+        return;
+    }
+
+    PlatformSetpoint sp{};
     bool ok = false;
     if (source == ManualCommandSource::Gui) {
         ok = manual_imu_.buildManualSetpointFromGui(
@@ -663,6 +733,10 @@ void SystemManager::onImuSample_(const control::ImuSample& sample) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Public control API
+// ---------------------------------------------------------------------------
+
 TrackerState SystemManager::state() const {
     return state_.load();
 }
@@ -696,8 +770,14 @@ void SystemManager::setTrackerThreshold(const std::uint8_t thr) {
 }
 
 void SystemManager::setMinConfidence(const float confidence) {
-    min_confidence_ = confidence;
+    // Update the single authoritative copy in config_ so that all reads of the
+    // confidence threshold — including the estimate callback — remain consistent.
+    config_.controller.min_confidence = confidence;
 }
+
+// ---------------------------------------------------------------------------
+// Observer registration
+// ---------------------------------------------------------------------------
 
 void SystemManager::registerFrameObserver(ICamera::FrameCallback cb) {
     std::lock_guard<std::mutex> lk(obs_mtx_);
@@ -739,6 +819,10 @@ void SystemManager::registerLatencyObserver(LatencyObserver cb) {
     latency_obs_ = std::move(cb);
 }
 
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
 void SystemManager::setState_(const TrackerState s) {
     const TrackerState prev = state_.exchange(s);
     if (prev != s) {
@@ -765,10 +849,10 @@ std::uint64_t SystemManager::nextSyntheticFrameId_() noexcept {
 
 void SystemManager::applyNeutralOnce_() {
     PlatformSetpoint sp{};
-    sp.frame_id = nextSyntheticFrameId_();
+    sp.frame_id  = nextSyntheticFrameId_();
     sp.t_control = std::chrono::steady_clock::now();
-    sp.tilt_rad = 0.0F;
-    sp.pan_rad = 0.0F;
+    sp.tilt_rad  = 0.0F;
+    sp.pan_rad   = 0.0F;
 
     {
         std::lock_guard<std::mutex> lk(kin_mtx_);
@@ -783,9 +867,9 @@ void SystemManager::applyNeutralOnce_() {
 
 void SystemManager::applyParkOnce_(const float servo_deg) {
     ActuatorCommand cmd{};
-    cmd.frame_id = nextSyntheticFrameId_();
-    cmd.t_actuate = std::chrono::steady_clock::now();
-    cmd.status = CommandStatus::Ok;
+    cmd.frame_id         = nextSyntheticFrameId_();
+    cmd.t_actuate        = std::chrono::steady_clock::now();
+    cmd.status           = CommandStatus::Ok;
     cmd.actuator_targets = {servo_deg, servo_deg, servo_deg};
 
     actuatorMgr_.onCommand(cmd);

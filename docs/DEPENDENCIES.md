@@ -31,7 +31,9 @@ sudo apt-get install -y cmake ninja-build g++ pkg-config git
 Required unconditionally. Used by the ADS1115 manual input and MPU6050 IMU backends for GPIO edge event handling via `libgpiod_event_demo`.
 
 ```bash
-sudo apt-get install -y libgpiod-dev
+# libgpiod v2 must be built from source — apt provides v1.x only.
+# See docs/build_and_run.md for the full build-from-source instructions.
+# The C++ bindings (gpiod.hpp) are only available in v2.
 ```
 
 ---
@@ -83,7 +85,7 @@ Controlled by: `-DSOLAR_TRY_LIBCAMERA=ON` (default)
 
 ### Git Submodules
 
-This repository  has **three** git submodules in `.gitmodules`:
+This repository has **two** git submodules in `.gitmodules`:
 
 | Submodule | Path | Role in this repository |
 |---|---|---|
@@ -104,7 +106,7 @@ The following kernel interfaces are used at runtime:
 | `/dev/i2c-1` | PCA9685, ADS1115, MPU6050 |
 | GPIO chip 0 | ADS1115 ALERT/RDY, MPU6050 data-ready |
 | `poll()` | `LinuxEventLoop`, `SimulatedPublisher` |
-| `signalfd` | `LinuxEventLoop` — SIGINT/SIGTERM shutdown |
+| `signalfd` | `LinuxEventLoop` — SIGINT/SIGQUIT/SIGHUP/SIGTERM shutdown |
 | `timerfd` (CLOCK_MONOTONIC) | `LinuxEventLoop` (CLI tick), `SimulatedPublisher` (frame pacing) |
 | `eventfd` | `SimulatedPublisher` — clean stop wakeup |
 
@@ -152,7 +154,7 @@ Manual input is **enabled by default** in `defaultConfig()`.
 | I2C address | `0x68` |
 | GPIO chip | 0 |
 | Data-ready GPIO pin | 27 |
-| WHO\_AM\_I expected | `0x70` |
+| WHO\_AM\_I expected | `0x70` (ICM-20600 variant; standard MPU-6050 returns `0x68`) |
 | Startup discard samples | 8 |
 | Accel sensitivity | 16384 LSB/g (±2g range) |
 | Gyro sensitivity | 131 LSB/°s (±250°/s range) |
@@ -227,3 +229,24 @@ sudo apt-get install -y libopencv-dev libcamera-dev
 # Optional — hardware validation
 sudo apt-get install -y i2c-tools
 ```
+---
+
+## 6. ADS1115 Manual Input — Library Decision
+
+Dr Porr's `rpi_ads1115` library (`https://github.com/berndporr/rpi_ads1115`) was evaluated for the manual potentiometer input path. The library uses the correct ALERT/RDY GPIO edge callback architecture and integrates cleanly with `libgpiod_event_demo`.
+
+**Hardware constraint encountered:** The library hardcodes the ADS1115 PGA (Programmable Gain Amplifier) to ±2.048V internally. The potentiometers on the rig are powered from the Raspberry Pi 3.3V rail, producing a wiper voltage of 0–3.3V. With the ±2.048V PGA, any ADC input above approximately 2.047V clips at the full-scale reading — approximately 62% of pot travel produces the same maximum output, leaving 38% of the physical range unusable.
+
+**Engineering decision:** Rather than modifying the submodule source (which would prevent clean upstream updates) or adding hardware voltage scaling (not available at time of implementation), a project-native ADS1115 driver was written: `src/sensors/manual/ADS1115ManualInput.cpp`.
+
+The native driver uses the same ALERT/RDY GPIO edge callback pattern as `libgpiod_event_demo` and configures the PGA to ±4.096V, which covers the full 0–3.3V potentiometer range without clipping.
+
+| Parameter | rpi_ads1115 submodule | Project-native ADS1115ManualInput |
+|---|---|---|
+| PGA setting | ±2.048V (hardcoded) | ±4.096V (configurable) |
+| Full pot range usable | No — clips at 62% | Yes — full 0–3.3V |
+| GPIO callback pattern | ALERT/RDY edge | ALERT/RDY edge (identical) |
+| Multi-channel support | Single channel per instance | Interleaved tilt + pan channels |
+
+**Future path:** The hardware fix is a 180Ω + 270Ω resistor voltage divider to power the pot VCC from ~1.97V instead of 3.3V. This would allow the `rpi_ads1115` submodule to be used directly without any code modification. This was planned but not implemented due to component availability at time of submission.
+

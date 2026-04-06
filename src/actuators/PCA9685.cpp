@@ -1,4 +1,5 @@
 #include "actuators/PCA9685.hpp"
+#include "hal/I2CBusPath.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -17,13 +18,13 @@ constexpr std::uint8_t MODE2      = 0x01U;
 constexpr std::uint8_t PRESCALE   = 0xFEU;
 constexpr std::uint8_t LED0_ON_L  = 0x06U;
 
-constexpr std::uint8_t MODE1_SLEEP = 0x10U;
-constexpr std::uint8_t MODE1_AI    = 0x20U;
+constexpr std::uint8_t MODE1_SLEEP   = 0x10U;
+constexpr std::uint8_t MODE1_AI      = 0x20U;
 constexpr std::uint8_t MODE1_RESTART = 0x80U;
 
-constexpr std::uint8_t MODE2_OUTDRV = 0x04U;
+constexpr std::uint8_t MODE2_OUTDRV  = 0x04U;
 
-constexpr float kOscillatorHz = 25'000'000.0F;
+constexpr float kOscillatorHz   = 25'000'000.0F;
 constexpr float kCountsPerCycle = 4096.0F;
 
 } // namespace
@@ -40,10 +41,9 @@ PCA9685::~PCA9685() {
 bool PCA9685::start(const float pwm_hz) {
     stop();
 
-    char devpath[32];
-    std::snprintf(devpath, sizeof(devpath), "/dev/i2c-%d", bus_);
+    const std::string path = i2cBusPath(bus_);
 
-    fd_ = ::open(devpath, O_RDWR | O_CLOEXEC);
+    fd_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
     if (fd_ < 0) {
         fd_ = -1;
         return false;
@@ -57,9 +57,11 @@ bool PCA9685::start(const float pwm_hz) {
 
     pwm_hz_ = (pwm_hz > 1.0F) ? pwm_hz : 50.0F;
 
-    // Convert the requested PWM frequency into the PCA9685 prescaler register.
+    // The prescaler register controls the PWM period. Its value is derived
+    // from the internal 25 MHz oscillator frequency and the 12-bit counter.
     const float prescale_f = (kOscillatorHz / (kCountsPerCycle * pwm_hz_)) - 1.0F;
-    const auto prescale = static_cast<std::uint8_t>(std::lround(std::max(3.0F, std::min(255.0F, prescale_f))));
+    const auto prescale = static_cast<std::uint8_t>(
+        std::lround(std::max(3.0F, std::min(255.0F, prescale_f))));
 
     std::uint8_t old_mode1 = 0U;
     if (!readReg8_(MODE1, old_mode1)) {
@@ -67,7 +69,13 @@ bool PCA9685::start(const float pwm_hz) {
         return false;
     }
 
-    // Enter sleep before changing the prescaler, as required by the chip.
+    // The PCA9685 datasheet (section 7.3.5) requires the oscillator to be
+    // stopped (MODE1_SLEEP = 1) before writing the prescaler register, and
+    // specifies a minimum 500 µs stabilisation period before the oscillator
+    // is restarted. On a Raspberry Pi I2C bus running at 100 kHz the I2C
+    // transactions following the sleep write naturally satisfy this minimum
+    // (each byte transfer takes approximately 90 µs). No explicit delay is
+    // inserted because the bus timing provides the required margin.
     const std::uint8_t sleep_mode = static_cast<std::uint8_t>((old_mode1 & 0x7FU) | MODE1_SLEEP);
     if (!writeReg8_(MODE1, sleep_mode)) {
         stop();

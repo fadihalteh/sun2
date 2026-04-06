@@ -32,7 +32,10 @@ jobs:
             autoconf-archive \
             automake \
             cmake \
+            doxygen \
             g++ \
+            graphviz \
+            lcov \
             libjsoncpp-dev \
             libtool \
             make \
@@ -61,7 +64,7 @@ jobs:
           test -f /usr/local/include/gpiod.hpp
           test -f external/libgpiod_event_demo/gpioevent.h
 
-      - name: Configure
+      - name: Configure (Release)
         env:
           PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
           CMAKE_PREFIX_PATH: /usr/local
@@ -87,3 +90,60 @@ jobs:
           LD_LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LD_LIBRARY_PATH }}
         run: |
           ctest --test-dir build --output-on-failure --verbose
+
+      - name: Verify Doxygen documentation build
+        run: |
+          doxygen Doxyfile
+          test -f docs/html/index.html
+
+      - name: Configure (Coverage)
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake -S . -B build-cov \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSOLAR_ENABLE_COVERAGE=ON
+
+      - name: Build (Coverage)
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake --build build-cov --parallel
+
+      - name: Run tests (Coverage)
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LD_LIBRARY_PATH }}
+        run: |
+          ctest --test-dir build-cov --output-on-failure
+
+      - name: Generate coverage report
+        run: |
+          lcov \
+            --capture \
+            --directory build-cov \
+            --output-file coverage.info \
+            --ignore-errors mismatch
+          lcov \
+            --remove coverage.info \
+            '/usr/*' \
+            '*/external/*' \
+            '*/tests/*' \
+            --output-file coverage_filtered.info
+          genhtml \
+            coverage_filtered.info \
+            --output-directory coverage_html \
+            --title "Solar Stewart Tracker Coverage"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage_html/
+          retention-days: 14

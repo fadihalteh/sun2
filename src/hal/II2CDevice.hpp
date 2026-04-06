@@ -74,9 +74,18 @@ public:
     /**
      * @brief Read a contiguous block of bytes starting from one register.
      *
-     * @param reg First register address.
-     * @param dest Destination buffer.
-     * @param count Number of bytes to read.
+     * The caller is responsible for ensuring that @p dest points to a buffer
+     * of at least @p count bytes. Implementations must return false immediately
+     * if @p dest is null or @p count is zero.
+     *
+     * A raw pointer is used here because the interface must remain compatible
+     * with the Linux kernel I2C read() system call, which requires a plain
+     * memory buffer. Callers should always allocate the destination as a
+     * fixed-size stack array or @c std::array before calling this method.
+     *
+     * @param reg   First register address.
+     * @param dest  Destination buffer of at least @p count bytes.
+     * @param count Number of bytes to read. Must be greater than zero.
      * @return True on success.
      */
     virtual bool readBytes(std::uint8_t reg, std::uint8_t* dest, std::size_t count) = 0;

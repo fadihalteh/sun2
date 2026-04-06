@@ -304,7 +304,6 @@ private:
     std::optional<ManualPotSample> latest_manual_pot_sample_;
     std::atomic<std::uint64_t> next_synthetic_frame_id_{1};
 
-    float min_confidence_{0.4F};
 
     ManualImuCoordinator manual_imu_;
     std::unique_ptr<BackendCoordinator> backends_;

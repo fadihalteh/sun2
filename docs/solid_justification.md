@@ -6,7 +6,11 @@ The core runtime pipeline is:
 
 **ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-`SystemManager` coordinates that pipeline at runtime. `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
+`SystemManager` coordinates that pipeline at runtime.
+
+> **Note on SystemManager scope:** `SystemManager` has a broader responsibility surface than the single-stage pipeline classes. It concentrates orchestration — thread lifecycle, queue ownership, callback wiring, state management, and startup/shutdown policy — in one place so the pipeline stages themselves remain clean. This is a deliberate design trade-off: concentrating orchestration complexity in one boundary class is preferable to spreading it across every pipeline stage, but it means `SystemManager` is the heaviest class in the system. `BackendCoordinator` (a nested class inside `SystemManager`) handles optional hardware backend bring-up; extracting it as a separate top-level class would further reduce `SystemManager`'s responsibilities and is a known improvement opportunity.
+
+ `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
 
 The system is intentionally structured as a staged pipeline rather than a single tracker class. That separation keeps acquisition, estimation, control, policy coordination, mechanism mapping, safety conditioning, hardware output, and application control distinct. For this system, that improves traceability, simplifies testing, and reduces the risk of mixing timing-sensitive logic with platform-specific code.
 

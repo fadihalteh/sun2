@@ -1,6 +1,7 @@
 #include "app/CliController.hpp"
 
 #include "system/SystemManager.hpp"
+#include "system/TrackerState.hpp"
 
 #include <charconv>
 #include <cstdio>
@@ -14,7 +15,6 @@ namespace solar::app {
 namespace {
 
 bool parseTwoFloats(const std::string_view text, float& a, float& b) {
-    // crude but sufficient and explicit
     const std::string s(text);
     const auto pos = s.find_first_of(" \t");
     if (pos == std::string::npos) {
@@ -54,14 +54,22 @@ void CliController::detachInputFd() {
     pending_.clear();
 }
 
-// Periodic CLI status path driven by the event-loop timer.
 bool CliController::onTick() {
+    ++tick_count_;
+
+    // Print a one-line runtime status at the configured interval so the
+    // operator can confirm that the headless process is alive and in the
+    // expected state without querying it explicitly.
+    if (tick_count_ % kStatusIntervalTicks == 0U) {
+        const TrackerState s = system_.state();
+        std::printf("[solar] state=%s\n", solar::toString(s));
+        std::fflush(stdout);
+    }
+
     return true;
 }
 
-// Stdin command path for manual interaction and shutdown.
 bool CliController::onInputReady() {
-    // Read whatever is ready and split it into complete lines.
     if (input_fd_ < 0) {
         return true;
     }
@@ -100,7 +108,6 @@ bool CliController::executeLine_(const std::string& line) {
         return false;
     }
 
-    // Keep the command set tiny and deterministic.
     if (line == "help") {
         printHelp_();
         return true;

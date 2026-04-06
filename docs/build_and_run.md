@@ -77,11 +77,36 @@ external/libgpiod_event_demo
 
 ## Linux dependencies
 
+### libgpiod v2 — required, must be built from source
+
+The project requires the C++ bindings introduced in libgpiod v2. The `apt` package on Raspberry Pi OS provides v1.x only. Build v2.2.2 from source:
+
+```bash
+sudo apt install -y autoconf autoconf-archive automake libtool wget xz-utils
+
+cd /tmp
+wget https://mirrors.edge.kernel.org/pub/software/libs/libgpiod/libgpiod-2.2.2.tar.xz
+tar -xf libgpiod-2.2.2.tar.xz
+cd libgpiod-2.2.2
+./configure --prefix=/usr/local --enable-tools --enable-bindings-cxx
+make -j$(nproc)
+sudo make install
+sudo ldconfig
+```
+
+Verify:
+```bash
+pkg-config --modversion libgpiod   # should print 2.2.2
+```
+
+
 ### Core build dependencies
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake ninja-build git pkg-config libgpiod-dev
+sudo apt install -y build-essential cmake ninja-build git pkg-config
+# Note: libgpiod-dev via apt provides v1.x only. This project requires v2.
+# See the libgpiod v2 build-from-source instructions below.
 ```
 
 ### Optional Qt GUI dependencies
@@ -172,8 +197,8 @@ This same configuration is also wrapped by the repository helper script:
 After a successful build, the main runtime targets are:
 
 ```text
-build/solar_tracker
-build/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
+build-pi/solar_tracker
+build-pi/src/qt/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
 ```
 
 ---
@@ -232,7 +257,7 @@ ctest --test-dir build-pi -L hw --output-on-failure
 These are for controlled hardware checks and should only be run on the target machine with the hardware connected safely.
 
 ```bash
-./build-pi/tests/test_pca9685
+./build-pi/src/actuators/tests/test_pca9685
 ./build-pi/tests/test_servodriver
 ```
 

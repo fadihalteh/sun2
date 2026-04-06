@@ -1,4 +1,5 @@
 #include "sensors/manual/ADS1115ManualInput.hpp"
+#include "hal/I2CBusPath.hpp"
 
 #include "external/libgpiod_event_demo/gpioevent.h"
 
@@ -60,6 +61,40 @@ std::int16_t toSigned16(const std::uint16_t raw) {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// I2CDescriptor
+// ---------------------------------------------------------------------------
+
+bool ADS1115ManualInput::I2CDescriptor::open(const int bus, const std::uint8_t address) {
+    close();
+
+    const std::string path = i2cBusPath(bus);
+
+    fd_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd_ < 0) {
+        fd_ = -1;
+        return false;
+    }
+
+    if (::ioctl(fd_, I2C_SLAVE, static_cast<int>(address)) < 0) {
+        close();
+        return false;
+    }
+
+    return true;
+}
+
+void ADS1115ManualInput::I2CDescriptor::close() {
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADS1115ManualInput
+// ---------------------------------------------------------------------------
+
 ADS1115ManualInput::ADS1115ManualInput(const ADS1115ManualInputSettings& settings)
     : settings_(settings) {
 }
@@ -73,7 +108,8 @@ void ADS1115ManualInput::registerCallback(SampleCallback callback) {
 }
 
 bool ADS1115ManualInput::start() {
-    // Configure the ADC once, then let the ALERT/RDY pin wake the sample callback.
+    // Configure the ADC once, then let the ALERT/RDY GPIO edge wake onDataReady_()
+    // for each completed conversion. No polling loop is involved.
     if (running_) {
         return true;
     }
@@ -89,12 +125,12 @@ bool ADS1115ManualInput::start() {
         return false;
     }
 
-    if (!openI2C_()) {
+    if (!i2c_.open(settings_.i2c_bus, settings_.i2c_address)) {
         return false;
     }
 
     if (!configureReadyMode_()) {
-        closeI2C_();
+        i2c_.close();
         return false;
     }
 
@@ -118,7 +154,7 @@ bool ADS1115ManualInput::start() {
         drdy_pin_->start(static_cast<int>(settings_.alert_rdy_gpio), settings_.gpio_chip_index);
     } catch (...) {
         drdy_pin_.reset();
-        closeI2C_();
+        i2c_.close();
         return false;
     }
 
@@ -127,7 +163,7 @@ bool ADS1115ManualInput::start() {
         if (!startNextConversion_(settings_.tilt_channel)) {
             drdy_pin_->stop();
             drdy_pin_.reset();
-            closeI2C_();
+            i2c_.close();
             return false;
         }
         awaiting_conversion_ = true;
@@ -147,36 +183,11 @@ void ADS1115ManualInput::stop() {
         drdy_pin_.reset();
     }
 
-    closeI2C_();
-}
-
-bool ADS1115ManualInput::openI2C_() {
-    char devpath[32];
-    std::snprintf(devpath, sizeof(devpath), "/dev/i2c-%d", settings_.i2c_bus);
-
-    i2c_fd_ = ::open(devpath, O_RDWR | O_CLOEXEC);
-    if (i2c_fd_ < 0) {
-        i2c_fd_ = -1;
-        return false;
-    }
-
-    if (::ioctl(i2c_fd_, I2C_SLAVE, static_cast<int>(settings_.i2c_address)) < 0) {
-        closeI2C_();
-        return false;
-    }
-
-    return true;
-}
-
-void ADS1115ManualInput::closeI2C_() {
-    if (i2c_fd_ >= 0) {
-        ::close(i2c_fd_);
-        i2c_fd_ = -1;
-    }
+    i2c_.close();
 }
 
 bool ADS1115ManualInput::writeRegister16_(const std::uint8_t reg, const std::uint16_t value) {
-    if (i2c_fd_ < 0) {
+    if (!i2c_.isOpen()) {
         return false;
     }
 
@@ -186,20 +197,20 @@ bool ADS1115ManualInput::writeRegister16_(const std::uint8_t reg, const std::uin
         static_cast<std::uint8_t>(value & 0xFFU)
     };
 
-    return ::write(i2c_fd_, buffer, sizeof(buffer)) == static_cast<ssize_t>(sizeof(buffer));
+    return ::write(i2c_.get(), buffer, sizeof(buffer)) == static_cast<ssize_t>(sizeof(buffer));
 }
 
 bool ADS1115ManualInput::readRegister16_(const std::uint8_t reg, std::uint16_t& value) {
-    if (i2c_fd_ < 0) {
+    if (!i2c_.isOpen()) {
         return false;
     }
 
-    if (::write(i2c_fd_, &reg, 1) != 1) {
+    if (::write(i2c_.get(), &reg, 1) != 1) {
         return false;
     }
 
     std::uint8_t buffer[2]{};
-    if (::read(i2c_fd_, buffer, sizeof(buffer)) != static_cast<ssize_t>(sizeof(buffer))) {
+    if (::read(i2c_.get(), buffer, sizeof(buffer)) != static_cast<ssize_t>(sizeof(buffer))) {
         return false;
     }
 
@@ -210,6 +221,9 @@ bool ADS1115ManualInput::readRegister16_(const std::uint8_t reg, std::uint16_t& 
 }
 
 bool ADS1115ManualInput::configureReadyMode_() {
+    // Set the comparator thresholds to their ALERT/RDY mode values: MSB of
+    // HI_THRESH = 1, MSB of LO_THRESH = 0. This causes the ALERT/RDY pin to
+    // pulse on each completed conversion regardless of the result.
     if (!writeRegister16_(REG_LO_THRESH, RDY_LO_THRESH)) {
         return false;
     }
@@ -308,7 +322,6 @@ void ADS1115ManualInput::onDataReady_() {
         current_sample_.timestamp = ManualInputClock::now();
 
         std::uint8_t next_channel = settings_.tilt_channel;
-        bool queue_next = true;
 
         switch (phase_) {
             case Phase::Tilt:
@@ -346,10 +359,8 @@ void ADS1115ManualInput::onDataReady_() {
                 break;
         }
 
-        if (queue_next) {
-            if (startNextConversion_(next_channel)) {
-                awaiting_conversion_ = true;
-            }
+        if (startNextConversion_(next_channel)) {
+            awaiting_conversion_ = true;
         }
     }
 

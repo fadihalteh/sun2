@@ -32,15 +32,19 @@ LinuxEventLoop::LinuxEventLoop(SystemManager& system, CliController& cli, const 
 }
 
 int LinuxEventLoop::run() {
-    // The event loop blocks in poll() and only wakes on timer, stdin, or signal activity.
     if (!system_.start()) {
         return 1;
     }
 
-    // Process-wide signal mask for signalfd delivery.
+    // Block SIGINT, SIGQUIT, SIGHUP, and SIGTERM process-wide so they are
+    // delivered exclusively through the signalfd below rather than through
+    // the default signal disposition. This prevents the process from being
+    // terminated before the shutdown path in stop() has executed.
     sigset_t mask;
     ::sigemptyset(&mask);
     ::sigaddset(&mask, SIGINT);
+    ::sigaddset(&mask, SIGQUIT);
+    ::sigaddset(&mask, SIGHUP);
     ::sigaddset(&mask, SIGTERM);
 
     if (::sigprocmask(SIG_BLOCK, &mask, nullptr) != 0) {
@@ -88,8 +92,10 @@ int LinuxEventLoop::run() {
 
     cli_.attachInputFd(stdin_fd);
 
-    // One blocking poll drives the CLI tick, stdin and shutdown signal.
-    // poll() multiplexes the three blocking event sources in one userspace loop.
+    // A single poll() call multiplexes three blocking event sources:
+    //   fds[0] — signalfd: SIGINT / SIGQUIT / SIGHUP / SIGTERM → clean shutdown
+    //   fds[1] — timerfd:  periodic CLI tick
+    //   fds[2] — stdin:    interactive command input
     pollfd fds[3];
     fds[0].fd = sig_fd;
     fds[0].events = POLLIN;
@@ -99,7 +105,6 @@ int LinuxEventLoop::run() {
     fds[2].events = POLLIN;
 
     int exit_code = 0;
-    // Event-loop lifetime flag.
     bool done = false;
 
     while (!done) {

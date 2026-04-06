@@ -7,6 +7,11 @@
  * This header collects the strongly typed configuration used to assemble the
  * final runtime graph. The goal is to keep startup policy and hardware defaults
  * explicit instead of scattering them throughout entry points.
+ *
+ * Hardware-level register addresses and initialisation constants belong inside
+ * their respective device driver classes, not here. Application-level config
+ * exposes only the settings that a system integrator might reasonably change:
+ * bus numbers, GPIO lines, data rates, and identity expectations.
  */
 
 #include "actuators/ActuatorManager.hpp"
@@ -50,7 +55,7 @@ enum class ManualInputBackend : std::uint8_t {
  */
 enum class ImuBackend : std::uint8_t {
     None,        ///< Disable IMU input.
-    Mpu6050Gpio  ///< Use the GPIO-driven MPU6050 backend.
+    Mpu6050Gpio  ///< Use the GPIO-driven MPU-6050/ICM-20600 backend.
 };
 
 /**
@@ -58,7 +63,7 @@ enum class ImuBackend : std::uint8_t {
  */
 enum class ImuFeedbackMode : std::uint8_t {
     Disabled, ///< IMU correction disabled.
-    Shadow,   ///< IMU path active for observation only.
+    Shadow,   ///< IMU path active for observation only; correction not applied.
     Live      ///< IMU path actively corrects control output.
 };
 
@@ -105,40 +110,35 @@ struct ADS1115ManualConfig {
 };
 
 /**
- * @brief Configuration for the MPU6050 GPIO-driven backend.
+ * @brief Application-level configuration for the MPU-6050/ICM-20600 IMU backend.
+ *
+ * This struct exposes only the settings a system integrator may need to change:
+ * bus assignment, GPIO routing, device identity, and startup behaviour.
+ * Register-level initialisation constants are internal to @c Mpu6050Publisher
+ * and are not part of the application configuration surface.
  */
-struct Mpu6050Config {
-    bool enabled{false};                 ///< Enable the MPU6050 backend.
-    int i2c_bus{1};                      ///< Linux I2C bus number.
-    std::uint8_t i2c_address{0x68U};     ///< MPU6050 I2C address.
+struct AppMpu6050Config {
+    bool enabled{false};                ///< Enable the MPU-6050/ICM-20600 backend.
+    int i2c_bus{1};                     ///< Linux I2C bus number.
+    std::uint8_t i2c_address{0x68U};    ///< Device I2C address.
 
-    int gpio_chip_index{0};              ///< GPIO chip index for data-ready.
-    unsigned int data_ready_gpio{27U};   ///< Data-ready GPIO line number.
+    int gpio_chip_index{0};             ///< GPIO chip index for the data-ready line.
+    unsigned int data_ready_gpio{27U};  ///< Data-ready GPIO line number.
 
-    std::uint8_t who_am_i_reg{0x75U};          ///< WHO_AM_I register address.
-    std::uint8_t who_am_i_expected{0x70U};     ///< Expected WHO_AM_I value.
+    /**
+     * @brief Expected WHO_AM_I register value.
+     *
+     * The ICM-20600 (pin-compatible MPU-6050 successor) returns 0x70,
+     * whereas the original MPU-6050 returns 0x68. The default here matches
+     * the ICM-20600 fitted to the physical rig.
+     */
+    std::uint8_t who_am_i_expected{0x70U};
 
-    std::uint8_t power_mgmt_reg{0x6BU};        ///< Power-management register.
-    std::uint8_t sample_rate_div_reg{0x19U};   ///< Sample-rate divider register.
-    std::uint8_t config_reg{0x1AU};            ///< Digital low-pass filter config register.
-    std::uint8_t gyro_config_reg{0x1BU};       ///< Gyroscope config register.
-    std::uint8_t accel_config_reg{0x1CU};      ///< Accelerometer config register.
-    std::uint8_t int_enable_reg{0x38U};        ///< Interrupt-enable register.
-    std::uint8_t int_status_reg{0x3AU};        ///< Interrupt-status register.
-    std::uint8_t sample_start_reg{0x3BU};      ///< Burst-read start register.
-
-    std::uint8_t wake_value{0x00U};            ///< Register value used to wake the device.
-    std::uint8_t sample_rate_div_value{0x07U}; ///< Divider register value.
-    std::uint8_t config_value{0x03U};          ///< DLPF config register value.
-    std::uint8_t gyro_config_value{0x00U};     ///< Gyroscope full-scale register value.
-    std::uint8_t accel_config_value{0x00U};    ///< Accelerometer full-scale register value.
-    std::uint8_t int_enable_value{0x01U};      ///< Interrupt-enable register value.
-    std::uint8_t data_ready_mask{0x01U};       ///< Bit mask indicating data-ready.
-
-    float accel_lsb_per_g{16384.0F};           ///< Accelerometer sensitivity in LSB per g.
-    float gyro_lsb_per_dps{131.0F};            ///< Gyroscope sensitivity in LSB per degree/s.
-
-    std::size_t startup_discard_samples{8U};   ///< Initial samples discarded after startup.
+    /**
+     * @brief Number of samples discarded after startup to allow the device
+     *        to stabilise.
+     */
+    std::size_t startup_discard_samples{8U};
 };
 
 /**
@@ -146,8 +146,8 @@ struct Mpu6050Config {
  */
 struct ImuFeedbackConfig {
     float gain{0.12F};                       ///< Proportional gain applied to measured tilt error.
-    float deadband_rad{0.01745329252F};      ///< Symmetric deadband in radians.
-    float max_correction_rad{0.01745329252F};///< Maximum correction magnitude in radians.
+    float deadband_rad{0.01745329252F};      ///< Symmetric deadband in radians (1 degree).
+    float max_correction_rad{0.01745329252F};///< Maximum correction magnitude in radians (1 degree).
 };
 
 /**
@@ -173,17 +173,15 @@ struct AppConfig {
 
     SimulatedCameraConfig simulated_camera{};   ///< Simulated camera backend configuration.
     LibcameraConfig libcamera{};                ///< Libcamera backend configuration.
-    ADS1115ManualConfig ads1115_manual{};       ///< ADS1115 manual-input configuration.
+    ADS1115ManualConfig ads1115_manual{};        ///< ADS1115 manual-input configuration.
     solar::ManualInputMapperConfig manual_mapping{}; ///< Potentiometer-to-command mapping config.
-    Mpu6050Config mpu6050{};                    ///< MPU6050 backend configuration.
+    AppMpu6050Config mpu6050{};                  ///< MPU-6050/ICM-20600 backend configuration.
 
     std::uint32_t tick_hz{30U};                 ///< Headless event-loop tick rate in hertz.
 };
 
 /**
  * @brief Construct the repository baseline runtime configuration.
- *
- * This is the shared baseline used by the project runtime.
  *
  * @return A fully-populated default configuration.
  */
@@ -192,10 +190,9 @@ AppConfig defaultConfig();
 /**
  * @brief Construct the default configuration for the Qt GUI runtime.
  *
- * The Qt runtime intentionally shares the same baseline as the headless runtime
- * so the GUI is not a separate architecture. The only policy difference is that
- * the GUI default enables live IMU correction so the user sees the real
- * closed-loop behaviour in the application.
+ * The Qt runtime shares the same baseline as the headless runtime. The only
+ * policy difference is that the GUI default enables live IMU correction so
+ * the user sees the real closed-loop behaviour.
  *
  * @return A fully-populated Qt runtime configuration.
  */

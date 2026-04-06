@@ -25,9 +25,10 @@ namespace solar {
  * - CI
  * - deterministic demos and smoke tests
  *
- * It is not used to fake the control timing inside the rest of the application.
- * On Linux it uses blocking file descriptors so the simulator thread sleeps until
- * a timer event or explicit wake-up arrives.
+ * Frame timing is driven by a @c timerfd (CLOCK_MONOTONIC), which keeps the
+ * worker thread sleeping in @c poll() between frames rather than consuming CPU
+ * in a sleep-based loop. A companion @c eventfd provides a low-latency wake-up
+ * path for clean shutdown.
  */
 class SimulatedPublisher final : public ICamera {
 public:
@@ -42,11 +43,14 @@ public:
         float noise_std{5.0F};        ///< Optional additive noise standard deviation.
         std::uint8_t background{20};  ///< Background intensity.
         std::uint8_t spot_value{240}; ///< Synthetic sun-spot intensity.
-        int spot_radius{12};          ///< Synthetic sun-spot radius.
+        int spot_radius{12};          ///< Synthetic sun-spot radius in pixels.
     };
 
     /**
      * @brief Construct the simulated publisher.
+     *
+     * Pre-allocates the internal pixel buffer to the configured frame dimensions
+     * so the worker loop can reuse it on every frame without heap allocation.
      *
      * @param log Shared logger.
      * @param cfg Simulated camera settings.
@@ -93,7 +97,7 @@ private:
     bool armTimer_() const;
     void workerLoop_();
     FrameEvent buildFrame_(std::uint64_t frame_id, float phase) const;
-    void drawSpot_(std::vector<std::uint8_t>& pixels, int cx, int cy) const;
+    void drawSpot_(int cx, int cy) const;
 
 private:
     Logger& log_;
@@ -107,6 +111,14 @@ private:
 
     int timer_fd_{-1}; ///< Blocking periodic timer for synthetic frame pacing.
     int wake_fd_{-1};  ///< Explicit wake-up used to stop the worker promptly.
+
+    /**
+     * Pre-allocated pixel buffer reused across every generated frame.
+     * Declared @c mutable because @c buildFrame_() is @c const but must
+     * modify the buffer as a performance optimisation (equivalent to a cached
+     * intermediate).
+     */
+    mutable std::vector<std::uint8_t> pixel_buf_;
 };
 
 } // namespace solar

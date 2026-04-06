@@ -8,11 +8,13 @@
  * - read text commands from stdin
  * - drive manual/auto transitions
  * - send explicit manual setpoints
+ * - emit periodic runtime status output
  * - request clean shutdown
  *
  * This class is not the realtime control path.
  */
 
+#include <cstdint>
 #include <string>
 
 namespace solar {
@@ -51,6 +53,8 @@ public:
     /**
      * @brief Handle one periodic loop tick.
      *
+     * Emits a brief runtime status line to stdout at the configured interval.
+     *
      * @return False if the application should terminate.
      */
     bool onTick();
@@ -70,6 +74,11 @@ private:
     SystemManager& system_;
     int input_fd_{-1};
     std::string pending_;
+
+    std::uint32_t tick_count_{0U};
+
+    /// Status line is printed once every @c kStatusIntervalTicks ticks.
+    static constexpr std::uint32_t kStatusIntervalTicks{30U};
 };
 
 } // namespace solar::app

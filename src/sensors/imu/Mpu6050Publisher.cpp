@@ -7,8 +7,8 @@
 namespace solar {
 namespace {
 
-constexpr float kG = 9.80665F;
-constexpr float kPi = 3.14159265358979323846F;
+constexpr float kG        = 9.80665F;
+constexpr float kPi       = 3.14159265358979323846F;
 constexpr float kDegToRad = kPi / 180.0F;
 
 } // namespace
@@ -46,7 +46,8 @@ bool Mpu6050Publisher::start() {
 
     discard_remaining_ = config_.startup_discard_samples;
 
-    // The GPIO edge is the wake-up event; I2C transfer only happens after the edge arrives.
+    // The GPIO data-ready edge is the sole wake event; the I2C transfer is
+    // performed only after the edge arrives. No polling loop is involved.
     gpio_pin_.registerCallback([this](const gpiod::edge_event& event) {
         onGpioEvent_(event);
     });
@@ -81,43 +82,47 @@ void Mpu6050Publisher::stop() {
 }
 
 bool Mpu6050Publisher::initialise_() {
+    // Verify device identity before writing any configuration registers.
     std::uint8_t who = 0U;
-    if (!device_.readByte(config_.who_am_i_reg, who)) {
+    if (!device_.readByte(kRegWhoAmI, who)) {
         return false;
     }
     if (who != config_.who_am_i_expected) {
         return false;
     }
 
-    if (!device_.writeByte(config_.power_mgmt_reg, config_.wake_value)) return false;
-    if (!device_.writeByte(config_.sample_rate_div_reg, config_.sample_rate_div_value)) return false;
-    if (!device_.writeByte(config_.config_reg, config_.config_value)) return false;
-    if (!device_.writeByte(config_.gyro_config_reg, config_.gyro_config_value)) return false;
-    if (!device_.writeByte(config_.accel_config_reg, config_.accel_config_value)) return false;
-    if (!device_.writeByte(config_.int_enable_reg, config_.int_enable_value)) return false;
+    // Apply standard MPU-6050/ICM-20600 initialisation sequence.
+    if (!device_.writeByte(kRegPowerMgmt,     kWakeValue))          return false;
+    if (!device_.writeByte(kRegSampleRateDiv, kSampleRateDivValue)) return false;
+    if (!device_.writeByte(kRegConfig,        kConfigValue))        return false;
+    if (!device_.writeByte(kRegGyroConfig,    kGyroConfigValue))    return false;
+    if (!device_.writeByte(kRegAccelConfig,   kAccelConfigValue))   return false;
+    if (!device_.writeByte(kRegIntEnable,     kIntEnableValue))     return false;
 
     return true;
 }
 
 bool Mpu6050Publisher::readSample_(IImuSample& sample) {
+    // Confirm the data-ready flag before reading the sample registers.
     std::uint8_t int_status = 0U;
-    if (!device_.readByte(config_.int_status_reg, int_status)) {
+    if (!device_.readByte(kRegIntStatus, int_status)) {
         return false;
     }
-    if ((int_status & config_.data_ready_mask) == 0U) {
+    if ((int_status & kDataReadyMask) == 0U) {
         return false;
     }
 
+    // Burst-read the 14-byte accel + temp + gyro register block.
     std::array<std::uint8_t, 14U> data{};
-    if (!device_.readBytes(config_.sample_start_reg, data.data(), data.size())) {
+    if (!device_.readBytes(kRegSampleStart, data.data(), data.size())) {
         return false;
     }
 
     const std::int16_t ax_raw = toInt16_(data[0], data[1]);
     const std::int16_t ay_raw = toInt16_(data[2], data[3]);
     const std::int16_t az_raw = toInt16_(data[4], data[5]);
-
-    const std::int16_t gx_raw = toInt16_(data[8], data[9]);
+    // data[6..7] is the temperature register, skipped.
+    const std::int16_t gx_raw = toInt16_(data[8],  data[9]);
     const std::int16_t gy_raw = toInt16_(data[10], data[11]);
     const std::int16_t gz_raw = toInt16_(data[12], data[13]);
 
@@ -135,7 +140,7 @@ bool Mpu6050Publisher::readSample_(IImuSample& sample) {
 }
 
 void Mpu6050Publisher::onGpioEvent_(const gpiod::edge_event& event) {
-    // Only edge-triggered samples reach the callback chain; there is no polling loop here.
+    // Only edge-triggered samples reach the callback chain. No polling loop.
     if (!running_) {
         return;
     }

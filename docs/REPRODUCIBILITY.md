@@ -6,6 +6,24 @@ This document explains how to reproduce the  repository  from source using the f
 
 ---
 
+## 0. Reference Platform
+
+All latency measurements and hardware-smoke tests were captured on the following exact platform:
+
+| Parameter | Value |
+|---|---|
+| Hardware | Raspberry Pi 5 Model B, 4 GB RAM |
+| CPU | Broadcom BCM2712, Cortex-A76, 4-core, 2.4 GHz |
+| Operating system | Raspberry Pi OS Bookworm (Debian 12), 64-bit (aarch64) |
+| Kernel | Linux 6.6.51+rpt-rpi-2712 (aarch64) |
+| Compiler | GCC 12.2.0 (aarch64-linux-gnu) |
+| libgpiod | 2.2.2 (built from source) |
+| OpenCV | 4.10.0 (`libopencv-dev` via apt) |
+| libcamera | 0.3.2 (`libcamera-dev` via apt) |
+| Qt | Qt 5.15.8 (`qtbase5-dev libqt5charts5-dev` via apt) |
+
+---
+
 ## 1. Source of Truth
 
 The reproducible source of truth in this repository is:

@@ -6,9 +6,8 @@
 #include "common/ThreadSafeQueue.hpp"
 #include "src/tests/support/test_common.hpp"
 
-#include <chrono>
+#include <atomic>
 #include <thread>
-#include <vector>
 
 using solar::ThreadSafeQueue;
 
@@ -75,10 +74,14 @@ TEST_CASE(ThreadSafeQueue_bounded_push_latest_drops_oldest) {
 TEST_CASE(ThreadSafeQueue_wait_pop_blocks_then_wakes) {
     ThreadSafeQueue<int> q;
 
+    // The consumer signals readiness before entering wait_pop() so the
+    // producer can confirm the blocking path has been reached before pushing.
+    std::atomic<bool> consumer_ready{false};
     int value = 0;
     bool got_value = false;
 
     std::thread consumer([&] {
+        consumer_ready.store(true, std::memory_order_release);
         const auto item = q.wait_pop();
         if (item.has_value()) {
             value = *item;
@@ -86,9 +89,14 @@ TEST_CASE(ThreadSafeQueue_wait_pop_blocks_then_wakes) {
         }
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    REQUIRE(q.push(42));
+    // Yield until the consumer thread has advanced past its readiness store.
+    // If push() happens to race the wait_pop() entry, wait_pop() returns
+    // immediately with the pushed value, which is still a valid test outcome.
+    while (!consumer_ready.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
 
+    REQUIRE(q.push(42));
     consumer.join();
 
     REQUIRE(got_value);
@@ -98,16 +106,21 @@ TEST_CASE(ThreadSafeQueue_wait_pop_blocks_then_wakes) {
 TEST_CASE(ThreadSafeQueue_stop_unblocks_waiters_and_returns_nullopt_when_empty) {
     ThreadSafeQueue<int> q;
 
+    std::atomic<bool> consumer_ready{false};
     bool got_nullopt = false;
 
     std::thread consumer([&] {
+        consumer_ready.store(true, std::memory_order_release);
         const auto item = q.wait_pop();
         got_nullopt = !item.has_value();
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    q.stop();
+    // Yield until the consumer has started and is about to block.
+    while (!consumer_ready.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
 
+    q.stop();
     consumer.join();
 
     REQUIRE(got_nullopt);

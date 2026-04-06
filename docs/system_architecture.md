@@ -39,10 +39,15 @@ For automatic tracking:
 
 For manual mode:
 
-- GUI slider changes update a stored GUI manual target
-- ADS1115 callbacks update the latest potentiometer sample
-- the control thread consumes the current manual state on each control tick
-- the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` path is used
+**Pot-driven manual (hardware potentiometer):**
+- ADS1115 ALERT/RDY GPIO edge fires → pot sample callback → `onManualPotSample_()`
+- setpoint built and dispatched **directly** to `Kinematics3RRS` in the callback context
+- this path is independently event-driven at the ADS1115 conversion rate, not gated by camera frames
+
+**GUI-driven manual (slider controls):**
+- GUI slider changes call `setManualSetpoint()` which stores atomic tilt/pan values
+- the control thread reads these atomics on each camera frame tick and builds the setpoint
+- the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` path is used in both modes
 
 This staged structure is appropriate because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
 

@@ -434,6 +434,13 @@ void LibcameraPublisher::run_() {
 
     log_.info("LibcameraPublisher: streaming started");
 
+    // libcamera delivers frames asynchronously through its own internal event
+    // loop via the requestCompleted signal connected above. This worker thread
+    // does not need to poll or block on a file descriptor to receive frames;
+    // instead it parks here on a condition variable and keeps the camera
+    // manager alive until stop() signals shutdown. This is the integration
+    // model prescribed by the libcamera API and by the libcamera2opencv
+    // wrapper that is used as the primary camera backend.
     {
         std::unique_lock<std::mutex> lk(run_mutex_);
         run_cv_.wait(lk, [this] { return !running_.load(); });

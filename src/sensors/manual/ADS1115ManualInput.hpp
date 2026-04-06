@@ -16,7 +16,7 @@
  * Non-responsibilities:
  * - mapping voltages to control angles
  * - manual/auto state policy
- * - queueing or thread orchestration outside the GPIO callback path
+ * - queuing or thread orchestration outside the GPIO callback path
  */
 
 #include "common/ManualInputTypes.hpp"
@@ -46,8 +46,8 @@ struct ADS1115ManualInputSettings {
     std::uint8_t pan_channel{1U};      ///< Pan potentiometer channel.
     std::uint8_t spare_channel{0xFFU}; ///< Optional spare channel. 0xFF disables it.
 
-    float full_scale_voltage{4.096F};  ///< Full-scale voltage.
-    unsigned int sample_rate_hz{128U}; ///< Conversion rate.
+    float full_scale_voltage{4.096F};  ///< Full-scale input voltage (V).
+    unsigned int sample_rate_hz{128U}; ///< ADS1115 conversion rate (Hz).
 };
 
 /**
@@ -58,7 +58,7 @@ public:
     /**
      * @brief Callback receiving one completed potentiometer sample.
      *
-     * @param sample Completed manual potentiometer sample.
+     * @param sample Completed manual potentiometer sample with voltages in volts.
      */
     using SampleCallback = std::function<void(const ManualPotSample& sample)>;
 
@@ -106,8 +106,54 @@ private:
         Spare  ///< Currently acquiring the spare channel.
     };
 
-    bool openI2C_();
-    void closeI2C_();
+    /**
+     * @brief RAII owner for the Linux I2C file descriptor.
+     *
+     * Ensures the descriptor is closed on any exit path from openI2C_() or
+     * start(), including early returns due to configuration failures.
+     */
+    class I2CDescriptor {
+    public:
+        I2CDescriptor() = default;
+
+        ~I2CDescriptor() {
+            close();
+        }
+
+        I2CDescriptor(const I2CDescriptor&) = delete;
+        I2CDescriptor& operator=(const I2CDescriptor&) = delete;
+
+        /**
+         * @brief Open the I2C device and select the slave address.
+         *
+         * @param bus Linux I2C bus number.
+         * @param address 7-bit I2C device address.
+         * @return True on success.
+         */
+        bool open(int bus, std::uint8_t address);
+
+        /**
+         * @brief Close the descriptor if open.
+         */
+        void close();
+
+        /**
+         * @brief Return the raw file descriptor, or -1 if not open.
+         *
+         * @return Raw file descriptor.
+         */
+        int get() const noexcept { return fd_; }
+
+        /**
+         * @brief Return whether the descriptor is currently open.
+         *
+         * @return True if open.
+         */
+        bool isOpen() const noexcept { return fd_ >= 0; }
+
+    private:
+        int fd_{-1};
+    };
 
     bool writeRegister16_(std::uint8_t reg, std::uint16_t value);
     bool readRegister16_(std::uint8_t reg, std::uint16_t& value);
@@ -131,7 +177,7 @@ private:
     std::atomic<bool> running_{false};
     std::unique_ptr<GPIOPin> drdy_pin_{};
 
-    int i2c_fd_{-1};
+    I2CDescriptor i2c_{};
     mutable std::mutex mutex_{};
 
     Phase phase_{Phase::Tilt};

@@ -25,7 +25,7 @@ src/app/LinuxEventLoop.cpp implements the headless runtime lifecycle. It multipl
 
 File descriptors:
 
-- signalfd → SIGINT / SIGTERM → clean shutdown  
+- signalfd → SIGINT / SIGQUIT / SIGHUP / SIGTERM → clean shutdown  
 - timerfd (CLOCK_MONOTONIC) → configurable tick (default 30 Hz) → CLI servicing  
 - stdin (dup’d) → terminal input  
 

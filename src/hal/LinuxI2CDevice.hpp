@@ -69,11 +69,11 @@ public:
     bool readByte(std::uint8_t reg, std::uint8_t& value) override;
 
     /**
-     * @brief Read a contiguous block of bytes.
+     * @brief Read a contiguous block of bytes starting from one register.
      *
-     * @param reg First register address.
-     * @param dest Destination buffer.
-     * @param count Number of bytes to read.
+     * @param reg   First register address.
+     * @param dest  Destination buffer of at least @p count bytes. Must not be null.
+     * @param count Number of bytes to read. Must be greater than zero.
      * @return True on success.
      */
     bool readBytes(std::uint8_t reg, std::uint8_t* dest, std::size_t count) override;
