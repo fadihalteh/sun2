@@ -479,7 +479,7 @@ Their configured sources are:
 #### Configure
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ```
 
 #### Build
@@ -505,19 +505,19 @@ cmake --build build --config Release
 ### Optional: Disable OpenCV Auto-Detection
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_OPENCV=OFF
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_OPENCV=OFF
 ```
 
 ### Optional: Disable libcamera Auto-Detection
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_LIBCAMERA=OFF
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_LIBCAMERA=OFF
 ```
 
 ### Optional: Enable Hardware-Adjacent Tests
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
 ```
 
 ---
@@ -547,7 +547,7 @@ The software-only path uses a simulated camera backend and a non-hardware actuat
 Built only when Qt support is enabled and found:
 
 ```bash
-./build/solar_tracker_qt
+./build/src/qt/solar_tracker_qt
 ```
 
 #### Typical Windows Location
@@ -592,7 +592,7 @@ This project integrates tests with **CTest**.
 #### Linux
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -LE hw
 ```
 
 #### Windows

@@ -20,6 +20,12 @@ target_link_libraries(pipeline_demo
         solar_common      # Logger, Types
 )
 
+# Coverage and warning flags must be applied to the demo executable so that
+# when the static libraries are built with --coverage (SOLAR_ENABLE_COVERAGE=ON),
+# the linker can resolve __gcov_init / __gcov_exit symbols.
+solar_enable_coverage(pipeline_demo)
+solar_project_warnings(pipeline_demo)
+
 target_include_directories(pipeline_demo
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src

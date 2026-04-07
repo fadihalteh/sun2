@@ -250,7 +250,7 @@ The hardware-smoke script uses these environment variables:
 ### Enabling Hardware Tests
 
 ```bash
-cmake -S . -B build-pi \
+cmake -S . -B build \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DSOLAR_ENABLE_TESTS=ON \
@@ -259,8 +259,8 @@ cmake -S . -B build-pi \
   -DSOLAR_TRY_LIBCAMERA=OFF \
   -DSOLAR_TRY_OPENCV=OFF
 
-cmake --build build-pi --parallel
-./scripts/test_pi_hw.sh build-pi
+cmake --build build --parallel
+./scripts/test_pi_hw.sh build
 ```
 
 ---

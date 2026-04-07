@@ -38,7 +38,7 @@ Each test executable is built by linking `test_main.cpp` together with one or mo
 
 ```bash
 # Run all tests compiled into an executable
-./build-pi/src/control/tests/test_control
+./build/src/control/tests/test_control
 ```
 
 With no arguments an executable runs every test compiled into it. CTest remains the primary interface for selecting and running tests. Individual test binaries can also be run directly from the build tree, but their command-line interfaces are not assumed to be uniform across all executables.
@@ -295,29 +295,29 @@ Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp
 
 ```bash
 # Run all CTest-registered checks
-ctest --test-dir build-pi --output-on-failure -LE hw
+ctest --test-dir build --output-on-failure -LE hw
 
 # Run hardware tests (requires hardware connected)
-SOLAR_RUN_I2C_HW_TESTS=1 ctest --test-dir build-pi --output-on-failure
+SOLAR_RUN_I2C_HW_TESTS=1 ctest --test-dir build --output-on-failure
 
 # Run one CTest entry by name
-ctest --test-dir build-pi --output-on-failure -R Controller_OutputClamped
+ctest --test-dir build --output-on-failure -R Controller_OutputClamped
 
 # Run individual module executables directly
-./build-pi/src/vision/tests/test_vision
-./build-pi/src/control/tests/test_control
-./build-pi/src/common/tests/test_common_core
-./build-pi/src/actuators/tests/test_actuators
-./build-pi/src/system/tests/test_system
+./build/src/vision/tests/test_vision
+./build/src/control/tests/test_control
+./build/src/common/tests/test_common_core
+./build/src/actuators/tests/test_actuators
+./build/src/system/tests/test_system
 
 # Enable and build hardware-adjacent tests
-cmake -S . -B build-pi -G Ninja -DSOLAR_ENABLE_TESTS=ON -DSOLAR_ENABLE_HW_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-pi -j
+cmake -S . -B build -G Ninja -DSOLAR_ENABLE_TESTS=ON -DSOLAR_ENABLE_HW_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j
 
 # Run hardware-adjacent executables directly
-./build-pi/src/actuators/tests/test_pca9685
-./build-pi/src/actuators/tests/test_servodriver
-./build-pi/src/sensors/tests/test_mpu6050_publisher
+./build/src/actuators/tests/test_pca9685
+./build/src/actuators/tests/test_servodriver
+./build/src/sensors/tests/test_mpu6050_publisher
 ```
 
 

@@ -179,15 +179,15 @@ cmake --build build --parallel
 ## Build with hardware tests enabled
 
 ```bash
-cmake -S . -B build-pi   -G Ninja   -DCMAKE_BUILD_TYPE=Debug   -DSOLAR_ENABLE_TESTS=ON   -DSOLAR_ENABLE_HW_TESTS=ON   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_TRY_LIBCAMERA=OFF   -DSOLAR_TRY_OPENCV=OFF
+cmake -S . -B build   -G Ninja   -DCMAKE_BUILD_TYPE=Debug   -DSOLAR_ENABLE_TESTS=ON   -DSOLAR_ENABLE_HW_TESTS=ON   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_TRY_LIBCAMERA=OFF   -DSOLAR_TRY_OPENCV=OFF
 
-cmake --build build-pi --parallel
+cmake --build build --parallel
 ```
 
 This same configuration is also wrapped by the repository helper script:
 
 ```bash
-./scripts/build_pi_debug.sh build-pi
+./scripts/build_pi_debug.sh build
 ```
 
 ---
@@ -197,8 +197,8 @@ This same configuration is also wrapped by the repository helper script:
 After a successful build, the main runtime targets are:
 
 ```text
-build-pi/solar_tracker
-build-pi/src/qt/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
+build/solar_tracker
+build/src/qt/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
 ```
 
 ---
@@ -238,7 +238,7 @@ Repository helper script:
 The helper script sets default hardware environment variables and then runs CTest with the `hw` label.
 
 ```bash
-./scripts/test_pi_hw.sh build-pi
+./scripts/test_pi_hw.sh build
 ```
 
 Equivalent explicit form:
@@ -247,7 +247,7 @@ Equivalent explicit form:
 export SOLAR_RUN_CAMERA_HW_TESTS=1
 export SOLAR_RUN_I2C_HW_TESTS=1
 export SOLAR_I2C_DEV=/dev/i2c-1
-ctest --test-dir build-pi -L hw --output-on-failure
+ctest --test-dir build -L hw --output-on-failure
 ```
 
 ---
@@ -257,8 +257,8 @@ ctest --test-dir build-pi -L hw --output-on-failure
 These are for controlled hardware checks and should only be run on the target machine with the hardware connected safely.
 
 ```bash
-./build-pi/src/actuators/tests/test_pca9685
-./build-pi/tests/test_servodriver
+./build/src/actuators/tests/test_pca9685
+./build/tests/test_servodriver
 ```
 
 ---
@@ -271,12 +271,12 @@ cd Solar-Stewart-Tracker
 
 git submodule update --init --recursive
 
-cmake -S . -B build-pi   -G Ninja   -DCMAKE_BUILD_TYPE=Release   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_ENABLE_HW_TESTS=ON
+cmake -S . -B build   -G Ninja   -DCMAKE_BUILD_TYPE=Release   -DSOLAR_ENABLE_QT=OFF   -DSOLAR_ENABLE_HW_TESTS=ON
 
-cmake --build build-pi --parallel
+cmake --build build --parallel
 
-ctest --test-dir build-pi --output-on-failure
-./build-pi/solar_tracker
+ctest --test-dir build --output-on-failure
+./build/solar_tracker
 ```
 
 ---
@@ -286,7 +286,7 @@ ctest --test-dir build-pi --output-on-failure
 If the build directory becomes stale, rebuild from scratch:
 
 ```bash
-rm -rf build build-pi
+rm -rf build build
 git submodule sync --recursive
 git submodule update --init --recursive
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
