@@ -220,47 +220,98 @@ flowchart TD
 ## 6. Automatic vs Manual Processing
 
 ```mermaid
-flowchart TD
-    subgraph AUTO["Automatic path — control thread"]
-      A[Frame event] --> B[frame queue push_latest]
-      B --> C[control thread wait_pop]
-      C --> D{state?}
-      D -- SEARCHING/TRACKING --> E[SunTracker.onFrame]
-      E --> F[SunEstimate callback]
-      F --> G[Controller.onEstimate]
-      G --> H[ManualImuCoordinator.applyImuCorrection]
-      H --> I[Kinematics3RRS.onSetpoint]
-      D -- MANUAL or FAULT --> Z[drain frame, no processing]
-    end
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph COL1["Automatic path — control thread"]
+    direction TB
+        A1["Frame event"]
+        A2["frame_q_.push_latest"]
+        A3["control thread
+wait_pop"]
+        A4{"state?"}
+        A5["SunTracker.onFrame"]
+        A6["Controller.onEstimate"]
+        A7["applyImuCorrection"]
+        AO(["setpoint"])
+        AX["drain — no processing"]
+  end
+ subgraph COL2["Pot manual path — ADS1115 callback thread"]
+    direction TB
+        B1["ADS1115 ALERT/RDY
+GPIO edge"]
+        B2["onManualPotSample_"]
+        B3{"state==MANUAL
+source==Pot?"}
+        B4["buildManualSetpointFromPot"]
+        B5["applyImuCorrection"]
+        BO(["setpoint"])
+        BX["discard"]
+  end
+ subgraph COL3["GUI manual path — GuiManualDispatcher thread"]
+    direction TB
+        C1["setManualSetpoint called"]
+        C2["GuiManualDispatcher
+.setSetpoint"]
+        C3["push_latest to
+bounded queue"]
+        C4["worker thread
+wakes immediately"]
+        C5{"state==MANUAL
+source==Gui?"}
+        C6["buildManualSetpointFromGui"]
+        C7["applyImuCorrection"]
+        CO(["setpoint"])
+        CX["discard"]
+  end
+ subgraph ACT["Actuator path — actuator thread"]
+    direction TB
+        J["cmd_q_.push_latest"]
+        K["actuator thread
+wait_pop"]
+        L["ActuatorManager.onCommand"]
+        M["ServoDriver.apply"]
+  end
+    A1 --> A2
+    A2 --> A3
+    A3 --> A4
+    A4 -- SEARCHING
+TRACKING --> A5
+    A5 --> A6
+    A6 --> A7
+    A7 --> AO
+    A4 -- MANUAL
+FAULT --> AX
+    B1 --> B2
+    B2 --> B3
+    B3 -- yes --> B4
+    B4 --> B5
+    B5 --> BO
+    B3 -- no --> BX
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    C4 --> C5
+    C5 -- yes --> C6
+    C6 --> C7
+    C7 --> CO
+    C5 -- no --> CX
+    AO --> KIN["⚙️  Kinematics3RRS.onSetpoint"]
+    BO --> KIN
+    CO --> KIN
+    J --> K
+    K --> L
+    L --> M
+    KIN --> J
 
-    subgraph POT["Pot manual path — ADS1115 callback thread"]
-      Q[ADS1115 ALERT/RDY GPIO edge] --> R[onManualPotSample_]
-      R --> R2{state == MANUAL
-and source == Pot?}
-      R2 -- yes --> S[buildManualSetpointFromPot]
-      S --> S2[applyImuCorrection]
-      S2 --> I
-      R2 -- no --> RX[discard]
-    end
-
-    subgraph GUI["GUI manual path — GuiManualDispatcher thread"]
-      P[setManualSetpoint called] --> P2[GuiManualDispatcher.setSetpoint]
-      P2 --> P3[push_latest to bounded queue]
-      P3 --> P4[worker thread wakes immediately]
-      P4 --> P5{state == MANUAL
-and source == Gui?}
-      P5 -- yes --> T[buildManualSetpointFromGui]
-      T --> T2[applyImuCorrection]
-      T2 --> I
-      P5 -- no --> PX[discard]
-    end
-
-    subgraph ACT["Actuator path — actuator thread"]
-      I --> J[command queue push_latest]
-      J --> K[actuator thread wait_pop]
-      K --> L[ActuatorManager.onCommand]
-      L --> M[ServoDriver.apply]
-    end
+     KIN:::shared
+    classDef path fill:#f0f4ff,stroke:#6677aa,stroke-width:1.5px
+    classDef shared fill:#fff8e1,stroke:#e6a800,stroke-width:2px
+    classDef actuator fill:#f0fff4,stroke:#44aa66,stroke-width:1.5px
+    classDef decision fill:#fff,stroke:#333,stroke-width:1.5px
+    classDef discard fill:#fff0f0,stroke:#cc6666,stroke-width:1px
 ```
 
 ---
