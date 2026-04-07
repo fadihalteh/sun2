@@ -6,11 +6,7 @@ The core runtime pipeline is:
 
 **ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-`SystemManager` coordinates that pipeline at runtime.
-
-> **Note on SystemManager scope:** `SystemManager` has a broader responsibility surface than the single-stage pipeline classes. It concentrates orchestration — thread lifecycle, queue ownership, callback wiring, state management, and startup/shutdown policy — in one place so the pipeline stages themselves remain clean. This is a deliberate design trade-off: concentrating orchestration complexity in one boundary class is preferable to spreading it across every pipeline stage, but it means `SystemManager` is the heaviest class in the system. `BackendCoordinator` (a nested class inside `SystemManager`) handles optional hardware backend bring-up; extracting it as a separate top-level class would further reduce `SystemManager`'s responsibilities and is a known improvement opportunity.
-
- `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
+`SystemManager` orchestrates that pipeline at runtime. `BackendCoordinator` owns optional hardware backend lifecycle. `GuiManualDispatcher` provides the dedicated event-driven thread for GUI manual mode. `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
 
 The system is intentionally structured as a staged pipeline rather than a single tracker class. That separation keeps acquisition, estimation, control, policy coordination, mechanism mapping, safety conditioning, hardware output, and application control distinct. For this system, that improves traceability, simplifies testing, and reduces the risk of mixing timing-sensitive logic with platform-specific code.
 
@@ -390,33 +386,102 @@ This class prevents low-level bus and register operations from leaking upward in
 
 ---
 
+## `BackendCoordinator`
+
+### Purpose
+
+`BackendCoordinator` owns the lifecycle of the two optional hardware backends:
+the ADS1115 manual potentiometer input and the MPU-6050/ICM-20600 IMU.
+
+This class was extracted from `SystemManager` to give backend resource ownership
+an explicit, single-responsibility boundary. `SystemManager` no longer needs to
+know about I2C device construction, backend start/stop sequencing, or the
+`ImuCallbackForwarder` adaptor — those details are encapsulated here.
+
+### SOLID role
+
+**Single Responsibility Principle** — Responsibility is hardware backend lifecycle:
+I2C device construction, start/stop sequencing, and sample delivery via callbacks.
+
+**Interface Segregation Principle** — `SystemManager` depends only on
+`BackendCoordinator::start()` and `stop()`. It has no visibility into which
+backends are active or how their callbacks are routed.
+
+### Boundary value
+
+Separating backend lifecycle from pipeline orchestration means `SystemManager`
+can be tested and reasoned about independently of hardware availability.
+
+---
+
+## `GuiManualDispatcher`
+
+### Purpose
+
+`GuiManualDispatcher` provides the dedicated event-driven thread for GUI manual
+mode. When `setSetpoint()` is called (from the Qt UI thread), the setpoint is
+pushed into a bounded freshest-data queue. The dispatcher's worker thread blocks
+on that queue and wakes immediately, building a platform setpoint via
+`ManualImuCoordinator` and dispatching directly to `Kinematics3RRS`.
+
+This class was introduced to remove the asymmetry where GUI manual mode depended
+on camera-frame wakeups while potentiometer manual mode was directly event-driven.
+Both manual paths now have structurally identical, independently-timed event paths.
+
+### SOLID role
+
+**Single Responsibility Principle** — Responsibility is GUI setpoint delivery:
+one queue, one thread, one dispatch path.
+
+**Open/Closed Principle** — The dispatcher works with any `ManualImuCoordinator`
+and any `Kinematics3RRS` instance without modification.
+
+**Interface Segregation Principle** — `SystemManager` depends on only
+`setSetpoint()`, `start()`, and `stop()`. The internal queue and thread are
+fully encapsulated.
+
+### Boundary value
+
+`setManualSetpoint()` on `SystemManager` is now a one-line forwarding call.
+The timing, queuing, and dispatch logic are entirely contained in this class.
+
+---
+
 ## `SystemManager`
 
 ### Purpose
 
-`SystemManager` is the runtime orchestration boundary.
+`SystemManager` is a thin runtime orchestrator. Its responsibilities are:
+- composing pipeline stages
+- owning two worker threads and two inter-thread queues
+- managing the runtime state machine (IDLE / STARTUP / SEARCHING / TRACKING /
+  MANUAL / FAULT / STOPPING)
+- lifecycle management (start / stop)
+- observer registration forwarding
 
-It coordinates pipeline wiring, worker threads, queue-driven processing, optional backend startup and shutdown, the tracker state machine, and observer registration for external surfaces such as the GUI.
+Backend lifecycle is delegated to `BackendCoordinator`. GUI manual dispatch is
+delegated to `GuiManualDispatcher`. Manual/IMU policy is delegated to
+`ManualImuCoordinator`. `SystemManager` itself is approximately 380 lines.
 
 ### SOLID role
 
-**Single Responsibility Principle**
+**Single Responsibility Principle** — Responsibility is pipeline orchestration
+and runtime state coordination. It does not implement vision, control law,
+kinematics, safety shaping, hardware access, or GUI manual timing.
 
-Its responsibility is runtime orchestration.
+**Dependency Inversion Principle** — Depends on `ICamera` (not a concrete
+backend), `ManualImuCoordinator` (not manual hardware), and
+`GuiManualDispatcher` (not Qt directly).
 
-It does not implement vision, control law, manual-input mapping, IMU estimation, kinematics, safety shaping, or low-level hardware access. Those responsibilities are delegated to dedicated classes.
+**Encapsulation** — Exposes explicit observer registration and control methods.
+Internal queue and thread management is private.
 
-**Dependency Inversion Principle**
+### Honest assessment
 
-It coordinates stage objects and stage interfaces rather than embedding the detailed logic of every stage directly into one runtime loop.
-
-**Encapsulation**
-
-It exposes explicit observer registration and control methods rather than encouraging direct access to runtime internals.
-
-### Boundary value
-
-This class centralises lifecycle and event flow while preserving dedicated stage boundaries for computation and hardware behaviour.
+`controlLoop_()` is now 10 lines with a single responsibility: drain camera
+frames and forward them to the automatic processing path. The manual branches
+have been fully removed. The class is substantially smaller than its previous
+form and its responsibilities are clearly bounded.
 
 ---
 

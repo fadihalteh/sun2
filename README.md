@@ -214,12 +214,16 @@ sequenceDiagram
     actor User
     participant Cam as Camera
     participant SM as SystemManager
+    participant BC as BackendCoordinator
+    participant GMD as GuiManualDispatcher
     participant FQ as FrameQueue
+    participant CT as Control thread
     participant ST as SunTracker
     participant C as Controller
     participant MIC as ManualImuCoordinator
     participant K as Kinematics3RRS
     participant CQ as CommandQueue
+    participant AT as Actuator thread
     participant AM as ActuatorManager
     participant SD as ServoDriver
     participant ADS as ADS1115
@@ -228,79 +232,84 @@ sequenceDiagram
 
     User->>SM: start()
     SM->>SD: start()
+    SM->>GMD: start()
+    SM->>BC: start()
+    Note over BC: starts ADS1115 and IMU backends
     SM->>Cam: start()
-    SM->>ADS: start()
-    SM->>IMU: start()
     SM->>SM: state = SEARCHING / MANUAL
 
-    IMU-->>SM: imu sample
+    IMU-->>SM: imu sample callback
     SM->>MIC: updateImuSample(sample)
 
     rect rgb(245,245,255)
-    Note over Cam,SD: Automatic frame-driven path
-    Cam-->>SM: FrameEvent
+    Note over Cam,SD: Automatic path — control thread only
+    Cam-->>SM: FrameEvent callback
     SM->>LM: onCapture(...)
     SM->>FQ: push_latest(frame)
 
-    FQ-->>SM: wait_pop()
-    SM->>ST: onFrame(frame)
-    ST-->>SM: SunEstimate
-    SM->>LM: onEstimate(...)
-
-    alt auto mode
-        SM->>C: onEstimate(estimate)
-        C-->>SM: PlatformSetpoint
-        SM->>LM: onControl(...)
-        SM->>MIC: applyImuCorrection(setpoint)
-        MIC-->>SM: corrected setpoint
-        SM->>K: onSetpoint(setpoint)
-        K-->>SM: ActuatorCommand
-        SM->>CQ: push_latest(command)
-    else manual mode
-        SM-->>SM: frame ignored
-    end
-
-    CQ-->>SM: wait_pop()
-    SM->>AM: onCommand(command)
-    AM-->>SM: safe command
-    SM->>LM: onActuate(...)
-    SM->>SD: apply(command)
+    CT->>FQ: wait_pop()
+    FQ-->>CT: FrameEvent
+    CT->>ST: onFrame(frame)
+    ST-->>CT: SunEstimate callback
+    CT->>LM: onEstimate(...)
+    CT->>C: onEstimate(estimate)
+    C-->>CT: PlatformSetpoint callback
+    CT->>LM: onControl(...)
+    CT->>MIC: applyImuCorrection(setpoint)
+    MIC-->>CT: corrected setpoint
+    CT->>K: onSetpoint(setpoint)
+    K-->>CT: ActuatorCommand callback
+    CT->>CQ: push_latest(command)
     end
 
     rect rgb(245,255,245)
-    Note over ADS,SD: Manual hardware input path
-    ADS-->>SM: manual pot sample
+    Note over ADS,K: Pot manual path — ADS1115 callback thread, independent of camera frames
+    ADS-->>SM: ManualPotSample callback
     SM->>MIC: buildManualSetpointFromPot(...)
-    alt MANUAL and pot control active
-        MIC-->>SM: PlatformSetpoint
-        SM->>LM: onControl(...)
-        SM->>K: onSetpoint(setpoint)
-        K-->>SM: ActuatorCommand
-        SM->>CQ: push_latest(command)
-    end
+    MIC-->>SM: PlatformSetpoint
+    SM->>MIC: applyImuCorrection(sp)
+    MIC-->>SM: corrected setpoint
+    SM->>LM: onControl(...)
+    SM->>K: onSetpoint(setpoint)
+    K-->>SM: ActuatorCommand callback
+    SM->>CQ: push_latest(command)
     end
 
     rect rgb(255,250,240)
-    Note over User,SD: Manual GUI path
+    Note over User,K: GUI manual path — GuiManualDispatcher thread, independent of camera frames
     User->>SM: enterManual()
     SM->>SM: state = MANUAL
 
     User->>SM: setManualSetpoint(tilt, pan)
-    SM->>MIC: buildManualSetpointFromGui(...)
-    MIC-->>SM: PlatformSetpoint
-    SM->>LM: onControl(...)
-    SM->>K: onSetpoint(setpoint)
-    K-->>SM: ActuatorCommand
-    SM->>CQ: push_latest(command)
+    SM->>GMD: setSetpoint(tilt, pan)
+    Note over GMD: push_latest wakes thread immediately
+    GMD->>MIC: buildManualSetpointFromGui(...)
+    MIC-->>GMD: PlatformSetpoint
+    GMD->>MIC: applyImuCorrection(sp)
+    MIC-->>GMD: corrected setpoint
+    GMD->>LM: onControl(...)
+    GMD->>K: onSetpoint(setpoint)
+    K-->>GMD: ActuatorCommand callback
+    GMD->>CQ: push_latest(command)
 
     User->>SM: exitManual()
     SM->>SM: state = SEARCHING
     end
 
+    rect rgb(240,240,240)
+    Note over CQ,SD: Actuator path — actuator thread
+    AT->>CQ: wait_pop()
+    CQ-->>AT: ActuatorCommand
+    AT->>AM: onCommand(command)
+    AM-->>AT: safe command callback
+    AT->>LM: onActuate(...)
+    AT->>SD: apply(command)
+    end
+
     User->>SM: stop()
     SM->>Cam: stop()
-    SM->>ADS: stop()
-    SM->>IMU: stop()
+    SM->>BC: stop()
+    SM->>GMD: stop()
     SM->>SD: stop()
     SM->>SM: state = IDLE
 ```

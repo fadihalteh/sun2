@@ -8,7 +8,7 @@ The implemented automatic processing path is:
 
 **ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-`SystemManager` orchestrates this pipeline, manages runtime state, starts and stops backends, and coordinates the worker threads. `SystemFactory` acts as the primary top-level assembly point for the application.
+`SystemManager` orchestrates this pipeline and manages runtime state. `BackendCoordinator` owns hardware backend lifecycle. `GuiManualDispatcher` provides the event-driven GUI manual path. `SystemFactory` assembles the runtime graph.
 
 This class structure is stronger than a monolithic alternative because it separates:
 
@@ -37,17 +37,13 @@ For automatic tracking:
 - the actuator manager applies command conditioning and output safety policy
 - the servo driver performs final calibrated output to the physical device
 
-For manual mode:
+For manual mode, both input paths are independently event-driven:
 
-**Pot-driven manual (hardware potentiometer):**
-- ADS1115 ALERT/RDY GPIO edge fires → pot sample callback → `onManualPotSample_()`
-- setpoint built and dispatched **directly** to `Kinematics3RRS` in the callback context
-- this path is independently event-driven at the ADS1115 conversion rate, not gated by camera frames
+**Pot-driven manual:** ADS1115 ALERT/RDY GPIO edge → `onManualPotSample_()` → setpoint built and dispatched directly to `Kinematics3RRS`. Timing is driven by the ADS1115 conversion rate, independent of camera frames.
 
-**GUI-driven manual (slider controls):**
-- GUI slider changes call `setManualSetpoint()` which stores atomic tilt/pan values
-- the control thread reads these atomics on each camera frame tick and builds the setpoint
-- the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` path is used in both modes
+**GUI-driven manual:** Qt slider → `setManualSetpoint()` → `GuiManualDispatcher::setSetpoint()` → push to bounded queue → `GuiManualDispatcher` worker thread wakes immediately → setpoint built via `ManualImuCoordinator` and dispatched directly to `Kinematics3RRS`. Timing is driven by operator input rate, independent of camera frames.
+
+The control thread handles only the automatic path. It is not involved in either manual path.
 
 This staged structure is appropriate because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
 
@@ -75,11 +71,22 @@ class SystemManager {
   +registerLatencyObserver(cb) void
   -onFrame_(fe) void
   -controlLoop_() void
-  -submitManualSetpointFromControlTick_(frame_id, t_control) void
   -actuatorLoop_() void
   -setState_(s) void
   -applyNeutralOnce_() void
   -applyParkOnce_(servo_deg) void
+}
+
+class BackendCoordinator {
+  +start(log) StartResult
+  +stop() void
+}
+
+class GuiManualDispatcher {
+  +start() void
+  +stop() void
+  +setSetpoint(tilt_rad, pan_rad) void
+  +registerSetpointObserver(cb) void
 }
 
 class ICamera {
@@ -167,7 +174,9 @@ SystemManager o-- ActuatorManager
 SystemManager o-- ServoDriver
 SystemManager o-- LatencyMonitor
 SystemManager o-- ManualImuCoordinator
-SystemManager o-- ADS1115ManualInput
+SystemManager o-- BackendCoordinator
+SystemManager o-- GuiManualDispatcher
+BackendCoordinator o-- ADS1115ManualInput
 SystemManager o-- Mpu6050Publisher
 
 SystemManager o-- ThreadSafeQueue~FrameEvent~ : frame_q_ cap=2
@@ -263,8 +272,8 @@ participant ADS as ADS1115ManualInput
 participant IMU as Mpu6050Publisher
 participant User as Qt / CLI User
 participant SM as SystemManager
-participant FQ as FrameQueue cap=2
-participant CT as Control thread
+participant BC as BackendCoordinator
+participant GMD as GuiManualDispatcher
 participant MIC as ManualImuCoordinator
 participant K as Kinematics3RRS
 participant CQ as CommandQueue cap=8
@@ -273,6 +282,10 @@ participant AM as ActuatorManager
 participant SD as ServoDriver
 participant LM as LatencyMonitor
 
+Note over BC,ADS: BackendCoordinator owns ADS1115 and IMU lifecycle
+BC->>ADS: start()
+BC->>IMU: start()
+
 IMU-->>SM: IMU callback(sample)
 SM->>MIC: updateImuSample(sample)
 
@@ -280,35 +293,30 @@ User->>SM: enterManual()
 SM->>MIC: setManualCommandSource(Pot or GUI)
 SM->>SM: setState(MANUAL)
 
-alt Pot-controlled manual mode
-  ADS-->>SM: Manual sample callback(sample)
-  SM->>SM: store latest pot sample
-else GUI-controlled manual mode
-  User->>SM: setManualSetpoint(tilt, pan)
-  SM->>SM: store latest GUI target
-end
-
-Note over CT,FQ: Existing control thread timing is reused
-
-CT->>FQ: wait_pop()
-FQ-->>CT: FrameEvent / control tick
-CT->>SM: submitManualSetpointFromControlTick_(frame_id, t_control)
-
-alt Pot source
-  SM->>MIC: buildManualSetpointFromPot(sample, state, frame_id, t_control, sp)
+alt Pot-controlled manual mode — ADS1115 ALERT/RDY edge driven
+  ADS-->>SM: ManualPotSample callback
+  SM->>MIC: buildManualSetpointFromPot(sample, state, id, t, sp)
   MIC-->>SM: PlatformSetpoint
   SM->>MIC: applyImuCorrection(sp)
   MIC-->>SM: corrected PlatformSetpoint
-else GUI source
-  SM->>MIC: buildManualSetpointFromGui(tilt, pan, state, frame_id, t_control, sp)
-  MIC-->>SM: PlatformSetpoint
-  Note over SM: GUI manual mode does not apply live IMU correction by default
+  SM->>LM: onControl(frame_id, t_control)
+  SM->>K: onSetpoint(corrected PlatformSetpoint)
+  Note over SM,K: Dispatched directly in ADS1115 callback — no frame dependency
+else GUI-controlled manual mode — operator input rate driven
+  User->>SM: setManualSetpoint(tilt, pan)
+  SM->>GMD: setSetpoint(tilt, pan)
+  Note over GMD: push_latest to bounded queue — wakes immediately
+  GMD->>MIC: buildManualSetpointFromGui(tilt, pan, state, id, t, sp)
+  MIC-->>GMD: PlatformSetpoint
+  GMD->>MIC: applyImuCorrection(sp)
+  MIC-->>GMD: corrected PlatformSetpoint
+  GMD->>LM: onControl(frame_id, t_control)
+  GMD->>K: onSetpoint(corrected PlatformSetpoint)
+  Note over GMD,K: Dispatched from GuiManualDispatcher thread — no frame dependency
 end
 
-SM->>LM: onControl(frame_id, t_control)
-SM->>K: onSetpoint(final PlatformSetpoint)
-K-->>SM: CommandCallback(ActuatorCommand)
-SM->>CQ: push_latest(ActuatorCommand)
+K-->>K: CommandCallback(ActuatorCommand)
+K->>CQ: push_latest(ActuatorCommand)
 
 AT->>CQ: wait_pop()
 CQ-->>AT: ActuatorCommand
@@ -352,10 +360,9 @@ flowchart LR
   end
 
   subgraph ManualInput["Manual Input"]
-    ADS["ADS1115ManualInput"]
-    Pot["Tilt / Pan Pots"]
-    GuiTarget["Stored GUI target"]
-    PotSample["Latest pot sample"]
+    ADS["ADS1115ManualInput<br/>ALERT/RDY GPIO edge"]
+    GMD["GuiManualDispatcher<br/>dedicated thread + queue"]
+    BC["BackendCoordinator<br/>owns ADS1115 + IMU"]
   end
 
   subgraph ImuFeedback["IMU Feedback"]
@@ -379,9 +386,10 @@ flowchart LR
   AM --> SD
 
   ADS -->|manual sample callback| SM
-  SM --> PotSample
-  QT -->|valueChanged / setManualSetpoint| SM
-  SM --> GuiTarget
+  SM -->|dispatch direct to K| K
+  QT -->|setManualSetpoint| SM
+  SM -->|setSetpoint| GMD
+  GMD -->|dispatch direct to K| K
   MPU -->|IMU callback| SM
   SM --> MIC
 
@@ -406,14 +414,23 @@ flowchart TB
     UICB["GUI / CLI target update"]
   end
 
-  subgraph T2["Control thread"]
+  subgraph T2["Control thread — automatic path only"]
     FQ["FrameQueue cap=2"]
     ST["SunTracker"]
     CTRL["Controller"]
-    MAN["submitManualSetpointFromControlTick_"]
     MIC["ManualImuCoordinator"]
     KIN["Kinematics3RRS"]
     CQ["CommandQueue cap=8"]
+  end
+
+  subgraph T4["Pot callback thread (ADS1115)"]
+    ADSCB2["onManualPotSample_()"]
+    POTK["→ Kinematics3RRS"]
+  end
+
+  subgraph T5["GuiManualDispatcher thread"]
+    GUIQ["GuiManualDispatcher queue"]
+    GUIK["→ Kinematics3RRS"]
   end
 
   subgraph T3["Actuator thread"]
@@ -423,9 +440,8 @@ flowchart TB
 
   CAM --> CAMCB --> FQ
   FQ --> ST --> CTRL --> MIC --> KIN --> CQ
-  FQ --> MAN --> MIC
-  ADS --> ADSCB --> MAN
-  UI --> UICB --> MAN
+  ADS --> ADSCB --> ADSCB2 --> POTK
+  UI --> UICB --> GUIQ --> GUIK
   MPU --> MPUCB --> MIC
   CQ --> ACT --> SERVO
 ```
@@ -436,7 +452,15 @@ flowchart TB
 
 ### SystemManager
 
-Coordinates runtime execution, manages threads, processes incoming events, and controls system state. It also stores manual GUI targets and the latest potentiometer sample, but only the control thread is allowed to turn that manual state into downstream kinematics work.
+Coordinates runtime execution, manages threads, processes incoming events, and controls system state. Manual timing is fully delegated: potentiometer commands dispatch directly from the ADS1115 callback, and GUI commands dispatch from `GuiManualDispatcher`. The control thread handles only the automatic pipeline.
+
+### BackendCoordinator
+
+Owns the lifecycle of optional hardware backends: ADS1115 manual input and MPU-6050/ICM-20600 IMU. Starts, stops, and owns I2C/GPIO resources independently of pipeline orchestration.
+
+### GuiManualDispatcher
+
+Owns a dedicated worker thread and bounded freshest-data queue for GUI manual setpoints. When `setManualSetpoint()` is called, the dispatcher wakes immediately and dispatches the setpoint to `Kinematics3RRS` without depending on camera-frame timing.
 
 ### ICamera and Camera Backends
 
@@ -490,5 +514,3 @@ The inter-thread queues are intentionally bounded:
 - Command queue capacity is larger (8) to absorb short bursts without dropping actuator updates prematurely.
 
 Both queues use a latest-wins policy, ensuring that the system prioritises current data while maintaining bounded memory and predictable behaviour.
-
-

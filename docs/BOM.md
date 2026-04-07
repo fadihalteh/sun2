@@ -41,7 +41,6 @@
 ## 4. Budget Assessment
 
 - Total estimated cost: **£217.00**
-- Within expected student project budget: **Yes**
 - Major cost drivers:
   - Raspberry Pi
   - High-torque servos

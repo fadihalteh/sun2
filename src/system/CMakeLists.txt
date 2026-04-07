@@ -1,4 +1,6 @@
 add_library(solar_system STATIC
+    BackendCoordinator.cpp
+    GuiManualDispatcher.cpp
     SystemManager.cpp
 )
 
@@ -25,6 +27,7 @@ else()
 endif()
 
 solar_enable_coverage(solar_system)
+solar_project_warnings(solar_system)
 
 if(SOLAR_ENABLE_TESTS)
     add_subdirectory(tests)

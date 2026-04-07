@@ -99,18 +99,21 @@ User-controlled mode.
 
 - activated via `enterManual()` or by `startup_mode == Manual`
 - automatic controller updates are disabled
-- the control thread still wakes on the normal frame/control cadence
-- GUI slider movement updates the stored GUI target continuously
-- ADS1115 callbacks update the latest potentiometer sample
-- the control thread builds the current manual setpoint and forwards it downstream
-- the downstream path remains `Kinematics3RRS → ActuatorManager → ServoDriver`
+- the control thread handles only the automatic pipeline — it is **not involved** in manual mode dispatch
 
-Two manual command sources are supported:
+**Pot-driven manual (`ManualCommandSource::Pot`):**
+- ADS1115 ALERT/RDY GPIO edge fires → `onManualPotSample_()` callback in the ADS1115 thread
+- setpoint built via `ManualImuCoordinator` and dispatched **directly** to `Kinematics3RRS`
+- timing is driven by the ADS1115 conversion rate — independent of camera frames
 
-- `ManualCommandSource::Gui`
-- `ManualCommandSource::Pot`
+**GUI-driven manual (`ManualCommandSource::Gui`):**
+- `setManualSetpoint()` → `GuiManualDispatcher::setSetpoint()` → push to bounded queue
+- `GuiManualDispatcher` worker thread wakes **immediately** and dispatches directly to `Kinematics3RRS`
+- timing is driven by operator input rate — independent of camera frames
 
-By default, GUI manual mode does not apply live IMU correction. This avoids fighting the operator-selected manual target with IMU noise.
+Both paths use the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` pipeline.
+
+IMU correction is applied via `ManualImuCoordinator::applyImuCorrection()` in both paths.
 
 ### STOPPING
 
@@ -187,7 +190,7 @@ flowchart TD
     D -- no --> F2["set FAULT"]
 
     D -- yes --> E["reset queues / reset manual state"]
-    E --> G["start worker threads"]
+    E --> G["start worker threads + GuiManualDispatcher"]
 
     G --> H{"backends start ok?"}
     H -- fail --> F3["stop and set FAULT"]
@@ -205,7 +208,8 @@ flowchart TD
     O["stop()"] --> P["set STOPPING"]
     P --> Q["camera stop"]
     Q --> R["backends stop"]
-    R --> S["stop queues and join threads"]
+    R --> R2["stop GuiManualDispatcher"]
+    R2 --> S["stop queues and join threads"]
     S --> T["apply neutral command"]
     T --> U["driver stop"]
     U --> W["set IDLE"]
@@ -217,31 +221,46 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Frame event] --> B[frame queue]
-    B --> C[control thread wake]
+    subgraph AUTO["Automatic path — control thread"]
+      A[Frame event] --> B[frame queue push_latest]
+      B --> C[control thread wait_pop]
+      C --> D{state?}
+      D -- SEARCHING/TRACKING --> E[SunTracker.onFrame]
+      E --> F[SunEstimate callback]
+      F --> G[Controller.onEstimate]
+      G --> H[ManualImuCoordinator.applyImuCorrection]
+      H --> I[Kinematics3RRS.onSetpoint]
+      D -- MANUAL or FAULT --> Z[drain frame, no processing]
+    end
 
-    C --> D{state?}
+    subgraph POT["Pot manual path — ADS1115 callback thread"]
+      Q[ADS1115 ALERT/RDY GPIO edge] --> R[onManualPotSample_]
+      R --> R2{state == MANUAL
+and source == Pot?}
+      R2 -- yes --> S[buildManualSetpointFromPot]
+      S --> S2[applyImuCorrection]
+      S2 --> I
+      R2 -- no --> RX[discard]
+    end
 
-    D -- SEARCHING/TRACKING --> E[SunTracker]
-    E --> F[SunEstimate]
-    F --> G[Controller]
-    G --> H[ManualImuCoordinator apply correction]
-    H --> I[Kinematics3RRS]
-    I --> J[command queue]
-    J --> K[actuator thread]
-    K --> L[ActuatorManager]
-    L --> M[ServoDriver]
+    subgraph GUI["GUI manual path — GuiManualDispatcher thread"]
+      P[setManualSetpoint called] --> P2[GuiManualDispatcher.setSetpoint]
+      P2 --> P3[push_latest to bounded queue]
+      P3 --> P4[worker thread wakes immediately]
+      P4 --> P5{state == MANUAL
+and source == Gui?}
+      P5 -- yes --> T[buildManualSetpointFromGui]
+      T --> T2[applyImuCorrection]
+      T2 --> I
+      P5 -- no --> PX[discard]
+    end
 
-    D -- MANUAL --> N[submitManualSetpointFromControlTick_]
-    O[GUI valueChanged] --> P[store GUI target]
-    Q[ADS1115 callback] --> R[store latest pot sample]
-    P --> N
-    R --> N
-    N --> S[ManualImuCoordinator build manual setpoint]
-    S --> T{source == GUI?}
-    T -- yes --> I
-    T -- no --> U[optional IMU correction]
-    U --> I
+    subgraph ACT["Actuator path — actuator thread"]
+      I --> J[command queue push_latest]
+      J --> K[actuator thread wait_pop]
+      K --> L[ActuatorManager.onCommand]
+      L --> M[ServoDriver.apply]
+    end
 ```
 
 ---
@@ -249,9 +268,11 @@ flowchart TD
 ## 7. Implementation Notes
 
 - automatic processing runs only in SEARCHING and TRACKING
-- manual callbacks directly drive downstream kinematics work
-- manual commands are continuous because the control thread consumes manual state on each control tick
-- GUI manual mode is continuous while dragging the slider
+- the control thread handles only the automatic path — it is not involved in manual dispatch
+- pot manual commands are event-driven from the ADS1115 ALERT/RDY GPIO edge
+- GUI manual commands are event-driven from the `GuiManualDispatcher` worker thread
+- both manual paths dispatch directly to `Kinematics3RRS` without camera-frame dependency
 - GUI manual mode does not use Qt timers as a control timing source
 - invalid kinematic results prevent actuation and trigger FAULT
 - state transitions are explicit and centrally controlled in `SystemManager`
+- `BackendCoordinator` starts and stops ADS1115 and IMU backends during STARTUP and STOPPING
