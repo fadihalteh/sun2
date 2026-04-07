@@ -167,9 +167,12 @@ TEST_CASE(SystemManager_start_to_searching_then_tracking_on_bright_frame) {
 }
 
 TEST_CASE(SystemManager_manual_mode_emits_commands) {
+    // GUI manual mode uses GuiManualDispatcher which wakes its own dedicated
+    // thread immediately when setManualSetpoint() is called. Commands must
+    // arrive without any camera frame being emitted — the GUI manual path is
+    // fully independent of camera-frame cadence.
     Logger log;
     auto cam = std::make_unique<FakeCamera>();
-    auto* cam_ptr = cam.get();
 
     auto cfg = makeBaseConfig();
 
@@ -178,7 +181,6 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
     REQUIRE(system.start());
     system.enterManual();
     system.setManualCommandSource(SystemManager::ManualCommandSource::Gui);
-
     REQUIRE(system.state() == TrackerState::MANUAL);
 
     std::atomic<int> command_count{0};
@@ -186,24 +188,19 @@ TEST_CASE(SystemManager_manual_mode_emits_commands) {
         command_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    // Verify no commands are generated before any frame reaches the control thread.
+    // setManualSetpoint() pushes to GuiManualDispatcher which wakes
+    // immediately — no frame emission required.
     system.setManualSetpoint(0.1F, -0.1F);
-    REQUIRE(command_count.load(std::memory_order_acquire) == 0);
-
-    // Emit the first frame and wait for at least one command to be produced.
-    cam_ptr->emitBrightCenteredFrame(1);
     REQUIRE(waitFor([&] { return command_count.load(std::memory_order_acquire) > 0; }));
 
     const int first_count = command_count.load(std::memory_order_acquire);
     REQUIRE(first_count > 0);
 
-    // Emit a second frame and confirm that continuous manual mode advances
-    // the command count without requiring a repeated setManualSetpoint() call.
-    cam_ptr->emitBrightCenteredFrame(2);
+    // A second setManualSetpoint() call produces another command immediately.
+    system.setManualSetpoint(0.2F, -0.2F);
     REQUIRE(waitFor([&] {
         return command_count.load(std::memory_order_acquire) > first_count;
     }));
-
     REQUIRE(command_count.load(std::memory_order_acquire) > first_count);
 
     system.stop();
