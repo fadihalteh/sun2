@@ -6,6 +6,12 @@
 <img width="1049" height="599" alt="circuitff" src="https://github.com/user-attachments/assets/d22b37de-0312-4b2d-b749-15665716ea76" />
 
 
+
+https://github.com/user-attachments/assets/e373fa9c-2d9f-4f3f-8f36-7be25adaffa7
+
+
+
+
 [https://www.youtube.com/shorts/J-tgFS92vjE](url)
 
 Real-time embedded **C++17** software for solar tracking using a **3-RRS Stewart-type parallel mechanism** on **Raspberry Pi / Linux**.
