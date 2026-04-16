@@ -3,6 +3,7 @@
 <p align="center">
   <img src="media/logo.jpeg" alt="SunLock Lab Solar Stewart Tracker" width="750">
 </p>
+<img width="1049" height="599" alt="circuitff" src="https://github.com/user-attachments/assets/d22b37de-0312-4b2d-b749-15665716ea76" />
 
 
 [https://www.youtube.com/shorts/J-tgFS92vjE](url)
