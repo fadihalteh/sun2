@@ -5,7 +5,7 @@
 </p>
 
 
-
+[https://www.youtube.com/shorts/J-tgFS92vjE](url)
 
 Real-time embedded **C++17** software for solar tracking using a **3-RRS Stewart-type parallel mechanism** on **Raspberry Pi / Linux**.
 
